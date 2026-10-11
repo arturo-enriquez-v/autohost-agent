@@ -81,6 +81,10 @@ func (r *Registry) Execute(ctx context.Context, jobType string, payload map[stri
 		if strings.HasPrefix(jobType, "container.") {
 			return execContainerCommand(ctx, jobType)
 		}
+		// vm.* commands are handled by pattern — not in the registry.
+		if strings.HasPrefix(jobType, "vm.") {
+			return execVMCommand(ctx, jobType, payload)
+		}
 		// Fallback: look for a custom script on disk
 		return r.execFromDisk(ctx, jobType)
 	}

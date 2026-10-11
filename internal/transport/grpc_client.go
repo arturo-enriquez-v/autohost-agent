@@ -298,6 +298,9 @@ func (c *GRPCClient) connectStream(ctx context.Context, client pb.NodeAgentServi
 	// Metrics goroutine: collects and sends MetricPayload every metricsInterval.
 	go c.metricsLoop(streamCtx, results)
 
+	// Hypervisor goroutine: reports KVM/libvirt capacity once per session.
+	go c.sendHypervisorInfo(streamCtx, results)
+
 	// Receiver: handles ServerMessage frames (execute_job, stream_logs, etc.).
 	for {
 		msg, err := stream.Recv()

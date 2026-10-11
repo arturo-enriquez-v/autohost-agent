@@ -249,3 +249,65 @@ link-server: deploy-incus
 	 incus exec $(NAME) -- autohost enroll link --api http://$$GATEWAY:8080 --token $(TOKEN) --name $(NAME); \
 	 incus exec $(NAME) -- sudo systemctl restart autohost-agent; \
 	 echo "✅ Servidor '$(NAME)' vinculado y activo en AutoHost."
+
+# ===== Remote Node Config (LAN) ===== #
+NODE_IP   ?= 192.168.101.33
+NODE_USER ?= arturo
+NODE_HOST ?= $(NODE_USER)@$(NODE_IP)
+NODE_NAME ?= mazapan
+HOST_IP   ?= 192.168.101.2
+API_PORT  ?= 8080
+GRPC_PORT ?= 9090
+
+.PHONY: node-update node-setup node-setup-hypervisor node-logs node-status node-shell
+
+node-update: build
+	@echo "🔨 Compilando autohost-cli..."
+	@(cd ../autohost-cli && go build -ldflags "-s -w" -o autohost main.go)
+	@echo "🚀 Transfiriendo binarios a $(NODE_HOST)..."
+	@scp ../autohost-cli/autohost $(NODE_HOST):/tmp/autohost
+	@scp $(BINARY_NAME) $(NODE_HOST):/tmp/autohost-agent
+	@echo "📦 Instalando binarios y reiniciando agente en $(NODE_HOST)..."
+	@ssh $(NODE_HOST) "sudo install -m 0755 /tmp/autohost /usr/local/bin/autohost && \
+		sudo install -m 0755 /tmp/autohost-agent /usr/local/bin/autohost-agent && \
+		rm -f /tmp/autohost /tmp/autohost-agent && \
+		sudo systemctl restart autohost-agent"
+	@echo "✅ Binarios actualizados y servicio reiniciado en $(NODE_IP)!"
+	@ssh $(NODE_HOST) "sudo systemctl status autohost-agent --no-pager | head -n 12"
+
+node-setup: node-update
+	@echo "🔑 Generando token de enrolamiento en base de datos local..."
+	@TOKEN=$$(python3 -c "import os, base64, hashlib, subprocess; \
+		raw = os.urandom(32); \
+		plain = 'autohost-enr_' + base64.urlsafe_b64encode(raw).decode().rstrip('='); \
+		h = hashlib.sha256(plain.encode()).hexdigest(); \
+		cid = subprocess.check_output(['docker', 'ps', '-q', '-f', 'name=postgres']).decode().strip().split()[0]; \
+		subprocess.run(['docker', 'exec', '-i', cid, 'psql', '-U', 'autohost', '-d', 'autohost', '-c', \
+			f\"INSERT INTO enroll_tokens (token, user_id, expires_at) VALUES ('{h}', 'a5cd786b-6cb5-4a79-997c-efe78b0cfa24', NOW() + INTERVAL '24 hours');\"], \
+			check=True, stdout=subprocess.DEVNULL); \
+		print(plain)"); \
+	 echo "   Token generado: $$TOKEN"; \
+	 echo "🔗 Enrolando nodo $(NODE_NAME) en http://$(HOST_IP):$(API_PORT)..."; \
+	 ssh $(NODE_HOST) "sudo autohost enroll link --api http://$(HOST_IP):$(API_PORT) --token $$TOKEN --name $(NODE_NAME) && \
+		sudo sed -i 's|grpc_address:.*|grpc_address: \"$(HOST_IP):$(GRPC_PORT)\"|g' /etc/autohost/config.yaml && \
+		if ! sudo grep -q 'grpc_insecure' /etc/autohost/config.yaml; then echo 'grpc_insecure: true' | sudo tee -a /etc/autohost/config.yaml; fi && \
+		sudo systemctl daemon-reload && \
+		sudo systemctl enable --now autohost-agent && \
+		sudo systemctl restart autohost-agent"; \
+	 echo "🎉 Nodo '$(NODE_NAME)' ($(NODE_IP)) configurado y conectado a AutoHost!"; \
+	 echo "🌐 Disponible en dashboard: http://localhost:3000"
+
+node-setup-hypervisor:
+	@echo "⚡ Instalando KVM/libvirt en nodo remoto $(NODE_HOST)..."
+	@ssh $(NODE_HOST) "yes | sudo autohost setup hypervisor && sudo usermod -aG libvirt,kvm autohost && sudo sed -i 's|SupplementaryGroups=docker.*|SupplementaryGroups=docker libvirt kvm|g' /etc/systemd/system/autohost-agent.service 2>/dev/null || true && sudo systemctl daemon-reload && sudo systemctl restart autohost-agent"
+	@echo "✅ Hypervisor configurado y servicio reiniciado en $(NODE_IP)!"
+
+node-logs:
+	@ssh $(NODE_HOST) "sudo journalctl -u autohost-agent -f"
+
+node-status:
+	@ssh $(NODE_HOST) "sudo systemctl status autohost-agent"
+
+node-shell:
+	@ssh -t $(NODE_HOST) "bash -l"
+
