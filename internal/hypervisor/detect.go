@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 // Package hypervisor detects whether the host can run virtual machines
 // (KVM + libvirt) and reports the resources available for them.
 //
