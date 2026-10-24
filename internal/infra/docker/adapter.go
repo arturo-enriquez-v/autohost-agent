@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 // Package docker provides infrastructure operations for Docker:
 // installation, compose lifecycle, networking, and user-group management.
 //

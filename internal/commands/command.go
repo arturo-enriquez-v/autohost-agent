@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package commands
 
 import (
@@ -80,6 +83,10 @@ func (r *Registry) Execute(ctx context.Context, jobType string, payload map[stri
 		// container.* commands are handled by pattern — not in the registry.
 		if strings.HasPrefix(jobType, "container.") {
 			return execContainerCommand(ctx, jobType)
+		}
+		// vm.* commands are handled by pattern — not in the registry.
+		if strings.HasPrefix(jobType, "vm.") {
+			return execVMCommand(ctx, jobType, payload)
 		}
 		// Fallback: look for a custom script on disk
 		return r.execFromDisk(ctx, jobType)
