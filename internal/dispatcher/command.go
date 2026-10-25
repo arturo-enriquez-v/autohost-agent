@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package commands
+package dispatcher
 
 import (
 	"context"
@@ -26,11 +26,25 @@ type Command interface {
 	Execute(ctx context.Context, payload map[string]any) error
 }
 
+// JobHandler is the consumer interface that all job handlers must implement.
+type JobHandler = Command
+
 // CommandWithOutput is an optional extension for built-in commands that
 // produce output that must be captured in the job result (e.g. status checks).
 type CommandWithOutput interface {
 	Command
 	ExecuteWithOutput(ctx context.Context, payload map[string]any) (string, error)
+}
+
+// JobHandlerWithOutput is an extension for job handlers that produce output.
+type JobHandlerWithOutput = CommandWithOutput
+
+// Dispatcher is an alias for Registry, highlighting its role as the central job router.
+type Dispatcher = Registry
+
+// NewDispatcher creates a new job dispatcher.
+func NewDispatcher() *Dispatcher {
+	return NewRegistry()
 }
 
 // registryEntry holds a command handler together with its kind.
