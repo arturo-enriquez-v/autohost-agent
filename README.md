@@ -117,18 +117,20 @@ make release     # Compilar binarios multi-plataforma + tag git en dist/
 .
 ├── cmd/agent/            # Entry point (acepta <config-path> o --version)
 ├── internal/
-│   ├── agent/            # Orquestador principal (config, lifecycle, run loop)
-│   ├── api/              # Cliente HTTP hacia la cloud API (heartbeat, metrics, jobs fallback)
-│   ├── commands/         # Registro de comandos (marketplace, docker, vm, scripts custom)
+│   ├── agent/            # Orquestador principal y Composition Root (config, lifecycle, DI)
+│   ├── dispatcher/       # Router y despachador reactivo de Jobs (built-in + scripts custom)
 │   ├── domain/           # Tipos de dominio puros (Job, App, CustomCommand, Heartbeat, Metrics)
 │   ├── services/         # Servicios en background (heartbeat, métricas, enrollment, autoheal)
 │   ├── security/         # Identidad mTLS/tokens, firmado de payloads y sanitización
-│   ├── transport/        # gRPC client + WebSocket client + streams de logs
-│   │   └── nodepb/       # Protocol Buffers generados (comunicación con Cloud)
-│   ├── adapters/         # Adaptadores de infraestructura
+│   ├── transport/        # Clientes de red y comunicación hacia el Control Plane
+│   │   ├── http/         # Cliente REST fallback para Heartbeat, Métricas y Jobs
+│   │   ├── nodepb/       # Protocol Buffers generados (gRPC)
+│   │   └── ws.go         # Cliente WebSocket y streams de diagnóstico
+│   ├── adapters/         # Adaptadores de infraestructura externa y persistencia
 │   │   ├── docker/       # Docker SDK, compose validator, swarm y gestión de contenedores
 │   │   ├── caddy/        # Enrutamiento dinámico y reverse proxy Caddy
-│   │   └── hypervisor/   # Detección y telemetría de virtualización KVM/libvirt
+│   │   ├── hypervisor/   # Detección y telemetría de virtualización KVM/libvirt
+│   │   └── state/        # Almacén atómico local (idempotencia de jobs y cache de desired state)
 │   └── platform/         # Utilidades de bajo nivel del sistema
 │       ├── exec/         # Ejecución y runner seguro de comandos shell
 │       ├── fs/           # Operaciones del sistema de archivos
