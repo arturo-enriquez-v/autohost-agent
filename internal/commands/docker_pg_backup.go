@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"autohost-agent/internal/infra/docker"
+	"autohost-agent/internal/adapters/docker"
 )
 
 // DockerPgBackup implements CommandWithOutput to create a PostgreSQL logical backup

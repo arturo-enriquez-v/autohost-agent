@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"autohost-agent/internal/infra/docker"
+	"autohost-agent/internal/adapters/docker"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"

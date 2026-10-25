@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"autohost-agent/internal/infra/docker"
+	"autohost-agent/internal/adapters/docker"
 )
 
 // SwarmInitCommand initializes a Swarm manager and returns the join tokens.

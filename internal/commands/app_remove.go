@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"autohost-agent/internal/infra/docker"
+	"autohost-agent/internal/adapters/docker"
 )
 
 // AppRemove removes a docker compose application and its files.

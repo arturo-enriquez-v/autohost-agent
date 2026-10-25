@@ -12,9 +12,9 @@ import (
 	"sort"
 	"strings"
 
+	"autohost-agent/internal/adapters/docker"
 	"autohost-agent/internal/domain"
-	"autohost-agent/internal/infra/docker"
-	"autohost-agent/pkg/dir"
+	"autohost-agent/internal/platform/paths"
 )
 
 // MarketplaceInstall installs an app from a compose template and env vars
@@ -48,7 +48,7 @@ func (c *MarketplaceInstall) Execute(_ context.Context, payload map[string]any) 
 		return fmt.Errorf("marketplace.install: invalid app_name: %w", err)
 	}
 
-	appDir := filepath.Join(dir.GetSubdir("apps"), p.AppName)
+	appDir := filepath.Join(paths.GetSubdir("apps"), p.AppName)
 
 	// Validate env var keys to prevent malformed .env or injection attacks
 	if err := validateEnvKeys(p.Env); err != nil {

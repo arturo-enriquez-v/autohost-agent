@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"autohost-agent/internal/infra/docker"
+	"autohost-agent/internal/adapters/docker"
 )
 
 // AppStop stops a docker compose application.

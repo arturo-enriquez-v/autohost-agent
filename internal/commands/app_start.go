@@ -8,7 +8,7 @@ import (
 	"fmt"
 
 	"autohost-agent/internal/domain"
-	"autohost-agent/internal/infra/docker"
+	"autohost-agent/internal/adapters/docker"
 )
 
 // AppStart starts a docker compose application.

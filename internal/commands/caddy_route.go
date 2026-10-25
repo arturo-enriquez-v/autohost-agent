@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"autohost-agent/internal/infra/caddy"
+	"autohost-agent/internal/adapters/caddy"
 	"autohost-agent/internal/security"
 )
 

@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"autohost-agent/internal/infra/docker"
+	"autohost-agent/internal/adapters/docker"
 )
 
 // AppRestart restarts a docker compose application (stop + start).

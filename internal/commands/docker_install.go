@@ -7,7 +7,7 @@ import (
 	"context"
 	"log"
 
-	"autohost-agent/internal/infra/docker"
+	"autohost-agent/internal/adapters/docker"
 )
 
 // DockerInstall installs Docker on the host system.
