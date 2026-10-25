@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package shell
+package exec
 
 import (
 	"bytes"
@@ -26,7 +26,6 @@ func ExecWithOutput(cmd string, args ...string) (string, error) {
 }
 
 func ExecShell(script string) error {
-	// bash con -e (stop on error) y -o pipefail
 	return Exec("bash", "-eo", "pipefail", "-c", script)
 }
 

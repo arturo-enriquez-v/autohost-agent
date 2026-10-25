@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 
 	"autohost-agent/internal/domain"
-	"autohost-agent/pkg/shell"
+	"autohost-agent/internal/platform/exec"
 )
 
 // CustomScriptCommand executes a known .sh file at a fixed path, capturing
@@ -32,7 +32,7 @@ func (c *CustomScriptCommand) ExecuteWithOutput(_ context.Context) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("script validation failed: %w", err)
 	}
-	return shell.ExecWithOutput("bash", absPath)
+	return exec.ExecWithOutput("bash", absPath)
 }
 
 // RegisterCustomScripts discovers all .sh files in the given directory and

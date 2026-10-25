@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"autohost-agent/internal/domain"
-	"autohost-agent/pkg/shell"
+	"autohost-agent/internal/platform/exec"
 )
 
 // ScriptExec executes a custom command script received via a job.
@@ -36,7 +36,7 @@ func (c *ScriptExec) Execute(_ context.Context, payload map[string]any) error {
 	}
 
 	fmt.Printf("🔧 Ejecutando custom command: %s\n", filepath.Base(absPath))
-	if err := shell.Exec("bash", absPath); err != nil {
+	if err := exec.Exec("bash", absPath); err != nil {
 		return fmt.Errorf("custom command failed: %w", err)
 	}
 	fmt.Printf("✅ Custom command '%s' completado.\n", filepath.Base(absPath))

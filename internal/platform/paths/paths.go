@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Arturo (AutoHost)
 
-package dir
+package paths
 
 import (
 	"os"
@@ -28,7 +28,6 @@ func EnsureAutohostDirs() error {
 		"logs",
 		"state",
 		"backups",
-		"config",
 	}
 
 	for _, sub := range subdirs {
