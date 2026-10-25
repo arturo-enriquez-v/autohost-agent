@@ -4,7 +4,7 @@
 package transport
 
 import (
-	pb "autohost-agent/internal/grpc/nodepb"
+	pb "autohost-agent/internal/transport/nodepb"
 	"bufio"
 	"bytes"
 	"context"

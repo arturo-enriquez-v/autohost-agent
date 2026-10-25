@@ -7,7 +7,7 @@ import (
 	"context"
 	"log"
 
-	pb "autohost-agent/internal/grpc/nodepb"
+	pb "autohost-agent/internal/transport/nodepb"
 )
 
 // handleCollectLogs is invoked when the server sends a CollectLogsPayload.

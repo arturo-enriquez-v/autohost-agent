@@ -27,7 +27,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"autohost-agent/internal/commands"
-	pb "autohost-agent/internal/grpc/nodepb"
+	pb "autohost-agent/internal/transport/nodepb"
 	"autohost-agent/internal/services"
 )
 

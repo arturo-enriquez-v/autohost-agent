@@ -7,7 +7,7 @@ import (
 	"context"
 	"strings"
 
-	pb "autohost-agent/internal/grpc/nodepb"
+	pb "autohost-agent/internal/transport/nodepb"
 )
 
 const (

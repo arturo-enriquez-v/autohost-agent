@@ -9,7 +9,7 @@ import (
 	"log"
 
 	"autohost-agent/internal/api"
-	pb "autohost-agent/internal/grpc/nodepb"
+	pb "autohost-agent/internal/transport/nodepb"
 	"autohost-agent/pkg/sysinfo"
 )
 

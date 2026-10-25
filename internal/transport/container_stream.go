@@ -9,9 +9,9 @@ import (
 	"log"
 	"time"
 
+	"autohost-agent/internal/adapters/docker"
 	"autohost-agent/internal/commands"
-	pb "autohost-agent/internal/grpc/nodepb"
-	"autohost-agent/internal/infra/docker"
+	pb "autohost-agent/internal/transport/nodepb"
 
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
