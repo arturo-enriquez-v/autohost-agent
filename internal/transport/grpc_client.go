@@ -26,9 +26,9 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 
-	"autohost-agent/internal/commands"
-	pb "autohost-agent/internal/transport/nodepb"
+	"autohost-agent/internal/dispatcher"
 	"autohost-agent/internal/services"
+	pb "autohost-agent/internal/transport/nodepb"
 )
 
 // GRPCTLSConfig holds TLS security options for the gRPC transport.
@@ -38,14 +38,21 @@ type GRPCTLSConfig struct {
 	CertPin    string // Optional SHA-256 fingerprint for certificate pinning.
 }
 
+// IdempotencyStore defines the contract for recording and checking job execution status.
+type IdempotencyStore interface {
+	HasJobBeenProcessed(jobID string) bool
+	RecordJob(jobID string, status string) error
+}
+
 type GRPCClient struct {
 	address        string
 	token          string
 	nodeID         string
 	tags           []string
 	tlsConfig      GRPCTLSConfig
-	registry       *commands.Registry
+	registry       *dispatcher.Registry
 	metricsService *services.MetricsService
+	stateStore     IdempotencyStore
 
 	heartbeatInterval time.Duration
 	metricsInterval   time.Duration
@@ -60,7 +67,7 @@ type GRPCClient struct {
 	healthMon *healthMonitor
 }
 
-func NewGRPCClient(address, token, nodeID string, tags []string, tlsConfig GRPCTLSConfig, registry *commands.Registry, metricsService *services.MetricsService) *GRPCClient {
+func NewGRPCClient(address, token, nodeID string, tags []string, tlsConfig GRPCTLSConfig, registry *dispatcher.Registry, metricsService *services.MetricsService) *GRPCClient {
 	return &GRPCClient{
 		address:           address,
 		token:             token,
@@ -73,6 +80,11 @@ func NewGRPCClient(address, token, nodeID string, tags []string, tlsConfig GRPCT
 		metricsInterval:   5 * time.Second,
 		healthMon:         newHealthMonitor(),
 	}
+}
+
+// SetStateStore assigns an idempotency state store to the client.
+func (c *GRPCClient) SetStateStore(store IdempotencyStore) {
+	c.stateStore = store
 }
 
 // Run connects to the gRPC server and maintains the session, reconnecting on
@@ -231,7 +243,7 @@ func (c *GRPCClient) registerCommands(ctx context.Context, client pb.NodeAgentSe
 
 	for _, info := range c.registry.ListCommands() {
 		protoType := pb.CommandType_COMMAND_TYPE_DEFAULT
-		if info.Kind == commands.KindCustom {
+		if info.Kind == dispatcher.KindCustom {
 			protoType = pb.CommandType_COMMAND_TYPE_CUSTOM
 		}
 		req := &pb.RegisterCommandRequest{
@@ -463,7 +475,25 @@ func uptimeSeconds() (int64, error) {
 
 // handleJob executes the given job and sends the result back through results.
 func (c *GRPCClient) handleJob(ctx context.Context, job *pb.ExecuteJobPayload, results chan<- *pb.NodeMessage) {
-	log.Printf("⚙️  gRPC job %s: executing command %q", job.GetJobId(), job.GetCommandName())
+	jobID := job.GetJobId()
+	log.Printf("⚙️  gRPC job %s: executing command %q", jobID, job.GetCommandName())
+
+	// Idempotency check: if job has already completed, skip duplicate execution
+	if c.stateStore != nil && c.stateStore.HasJobBeenProcessed(jobID) {
+		log.Printf("ℹ️  gRPC job %s already processed (skipping duplicate execution)", jobID)
+		result := &pb.JobResultPayload{
+			JobId:  jobID,
+			Status: pb.JobStatus_JOB_STATUS_COMPLETED,
+			Output: "job already processed (idempotent skip)",
+		}
+		select {
+		case results <- &pb.NodeMessage{
+			Payload: &pb.NodeMessage_JobResult{JobResult: result},
+		}:
+		case <-ctx.Done():
+		}
+		return
+	}
 
 	// Build optional payload from the proto params field.
 	// params is a JSON object string — unmarshal it so commands can access
@@ -474,7 +504,7 @@ func (c *GRPCClient) handleJob(ctx context.Context, job *pb.ExecuteJobPayload, r
 	if p := job.GetParams(); p != "" {
 		if err := json.Unmarshal([]byte(p), &payload); err != nil {
 			payload = map[string]any{}
-			log.Printf("⚠️  gRPC job %s: could not parse params JSON: %v", job.GetJobId(), err)
+			log.Printf("⚠️  gRPC job %s: could not parse params JSON: %v", jobID, err)
 		}
 		payload["params"] = p // always expose raw JSON string
 	}
@@ -483,19 +513,22 @@ func (c *GRPCClient) handleJob(ctx context.Context, job *pb.ExecuteJobPayload, r
 
 	var result *pb.JobResultPayload
 	if res.Err != nil {
-		log.Printf("❌ gRPC job %s failed: %v", job.GetJobId(), res.Err)
+		log.Printf("❌ gRPC job %s failed: %v", jobID, res.Err)
 		result = &pb.JobResultPayload{
-			JobId:  job.GetJobId(),
+			JobId:  jobID,
 			Status: pb.JobStatus_JOB_STATUS_FAILED,
 			Output: res.Output,
 			Error:  res.Err.Error(),
 		}
 	} else {
-		log.Printf("✅ gRPC job %s completed", job.GetJobId())
+		log.Printf("✅ gRPC job %s completed", jobID)
 		result = &pb.JobResultPayload{
-			JobId:  job.GetJobId(),
+			JobId:  jobID,
 			Status: pb.JobStatus_JOB_STATUS_COMPLETED,
 			Output: res.Output,
+		}
+		if c.stateStore != nil {
+			_ = c.stateStore.RecordJob(jobID, "completed")
 		}
 	}
 
