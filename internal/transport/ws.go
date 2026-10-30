@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package transport
 
 import (
@@ -8,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"autohost-agent/internal/commands"
+	"autohost-agent/internal/dispatcher"
 	"autohost-agent/internal/domain"
 
 	"github.com/gorilla/websocket"
@@ -20,11 +23,11 @@ type WSClient struct {
 	token    string
 	conn     *websocket.Conn
 	mu       sync.Mutex
-	registry *commands.Registry
+	registry *dispatcher.Registry
 }
 
 // NewWSClient creates a new WebSocket client.
-func NewWSClient(url, token string, registry *commands.Registry) *WSClient {
+func NewWSClient(url, token string, registry *dispatcher.Registry) *WSClient {
 	return &WSClient{
 		url:      url,
 		token:    token,

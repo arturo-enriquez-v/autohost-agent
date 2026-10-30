@@ -1,7 +1,10 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package transport
 
 import (
-	pb "autohost-agent/internal/grpc/nodepb"
+	pb "autohost-agent/internal/transport/nodepb"
 	"bufio"
 	"bytes"
 	"context"
@@ -82,6 +85,7 @@ func (c *GRPCClient) streamJournalctlLogs(logCtx context.Context, cancel context
 			if line == "" {
 				continue
 			}
+			line = sanitizeLogLine(line)
 			u := unit
 			if u == "" {
 				u = extractUnit(line)

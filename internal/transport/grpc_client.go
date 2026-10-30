@@ -1,12 +1,20 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package transport
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -18,18 +26,33 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 
-	"autohost-agent/internal/commands"
-	pb "autohost-agent/internal/grpc/nodepb"
+	"autohost-agent/internal/dispatcher"
 	"autohost-agent/internal/services"
+	pb "autohost-agent/internal/transport/nodepb"
 )
+
+// GRPCTLSConfig holds TLS security options for the gRPC transport.
+type GRPCTLSConfig struct {
+	Insecure   bool   // If true, allows plaintext ONLY for localhost/loopback addresses.
+	CACertPath string // Optional path to custom CA certificate file.
+	CertPin    string // Optional SHA-256 fingerprint for certificate pinning.
+}
+
+// IdempotencyStore defines the contract for recording and checking job execution status.
+type IdempotencyStore interface {
+	HasJobBeenProcessed(jobID string) bool
+	RecordJob(jobID string, status string) error
+}
 
 type GRPCClient struct {
 	address        string
 	token          string
 	nodeID         string
 	tags           []string
-	registry       *commands.Registry
+	tlsConfig      GRPCTLSConfig
+	registry       *dispatcher.Registry
 	metricsService *services.MetricsService
+	stateStore     IdempotencyStore
 
 	heartbeatInterval time.Duration
 	metricsInterval   time.Duration
@@ -44,18 +67,24 @@ type GRPCClient struct {
 	healthMon *healthMonitor
 }
 
-func NewGRPCClient(address, token, nodeID string, tags []string, registry *commands.Registry, metricsService *services.MetricsService) *GRPCClient {
+func NewGRPCClient(address, token, nodeID string, tags []string, tlsConfig GRPCTLSConfig, registry *dispatcher.Registry, metricsService *services.MetricsService) *GRPCClient {
 	return &GRPCClient{
 		address:           address,
 		token:             token,
 		nodeID:            nodeID,
 		tags:              tags,
+		tlsConfig:         tlsConfig,
 		registry:          registry,
 		metricsService:    metricsService,
 		heartbeatInterval: 30 * time.Second,
 		metricsInterval:   5 * time.Second,
 		healthMon:         newHealthMonitor(),
 	}
+}
+
+// SetStateStore assigns an idempotency state store to the client.
+func (c *GRPCClient) SetStateStore(store IdempotencyStore) {
+	c.stateStore = store
 }
 
 // Run connects to the gRPC server and maintains the session, reconnecting on
@@ -79,24 +108,106 @@ func (c *GRPCClient) Run(ctx context.Context) error {
 	}
 }
 
-func (c *GRPCClient) runOnce(ctx context.Context) error {
-	// gRPC addresses must be "host:port" — strip any http:// or https:// prefix.
-	// Use TLS when the address has an https:// scheme (e.g. via Cloudflare Tunnel).
-	addr := c.address
-	useTLS := strings.HasPrefix(addr, "https://") || strings.HasSuffix(addr, ":443")
-	// 2. Limpiar la dirección para gRPC
+// BuildDialOptions parses the target address and configures secure transport credentials.
+func BuildDialOptions(rawAddr string, tlsCfg GRPCTLSConfig) (string, grpc.DialOption, error) {
+	if strings.TrimSpace(rawAddr) == "" {
+		return "", nil, errors.New("gRPC address is empty")
+	}
+
+	addr := rawAddr
 	addr = strings.TrimPrefix(addr, "https://")
 	addr = strings.TrimPrefix(addr, "http://")
+	addr = strings.TrimRight(addr, "/")
 
-	var transportCreds grpc.DialOption
-	if useTLS {
-		// Usamos la configuración de TLS por defecto del sistema
-		// Esto es necesario para que Cloudflare acepte la conexión
-		transportCreds = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
-			ServerName: strings.Split(addr, ":")[0], // Asegura el SNI correcto
-		}))
-	} else {
-		transportCreds = grpc.WithTransportCredentials(insecure.NewCredentials())
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+		if tlsCfg.Insecure && isLoopbackOrPrivateAddress(host) {
+			port = "9090"
+		} else {
+			port = "443"
+		}
+		addr = net.JoinHostPort(host, port)
+	}
+
+	// 1. Insecure mode: enforce loopback or private/VPN network address check
+	if tlsCfg.Insecure {
+		if !isLoopbackOrPrivateAddress(host) {
+			return "", nil, fmt.Errorf("security violation: plaintext insecure gRPC is only permitted for loopback or private network addresses, got %q", host)
+		}
+		return addr, grpc.WithTransportCredentials(insecure.NewCredentials()), nil
+	}
+
+	// 2. TLS configuration (mandatory for all remote / production endpoints)
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		ServerName: host,
+	}
+
+	// 3. Custom CA Certificate
+	if tlsCfg.CACertPath != "" {
+		caPEM, err := os.ReadFile(tlsCfg.CACertPath)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to read CA certificate from %s: %w", tlsCfg.CACertPath, err)
+		}
+		certPool := x509.NewCertPool()
+		if !certPool.AppendCertsFromPEM(caPEM) {
+			return "", nil, fmt.Errorf("failed to parse valid PEM CA certificate from %s", tlsCfg.CACertPath)
+		}
+		tlsConfig.RootCAs = certPool
+	}
+
+	// 4. Certificate Pinning (SHA-256 fingerprint)
+	if tlsCfg.CertPin != "" {
+		expectedPin := normalizeFingerprint(tlsCfg.CertPin)
+		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return errors.New("no peer certificates presented for pinning verification")
+			}
+			leafSha256 := sha256.Sum256(rawCerts[0])
+			actualHex := hex.EncodeToString(leafSha256[:])
+			if !strings.EqualFold(actualHex, expectedPin) {
+				return fmt.Errorf("certificate pinning mismatch: expected %s, got %s", expectedPin, actualHex)
+			}
+			return nil
+		}
+	}
+
+	return addr, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), nil
+}
+
+var _, cgnatNet, _ = net.ParseCIDR("100.64.0.0/10")
+
+func isLoopbackOrPrivateAddress(host string) bool {
+	clean := strings.TrimSpace(strings.ToLower(host))
+	if clean == "localhost" || clean == "127.0.0.1" || clean == "::1" || clean == "0.0.0.0" {
+		return true
+	}
+	ip := net.ParseIP(clean)
+	if ip != nil {
+		if ip.IsLoopback() || ip.IsUnspecified() || ip.IsPrivate() {
+			return true
+		}
+		if cgnatNet != nil && cgnatNet.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeFingerprint(pin string) string {
+	clean := strings.TrimSpace(strings.ToLower(pin))
+	clean = strings.TrimPrefix(clean, "sha256:")
+	clean = strings.TrimPrefix(clean, "sha256=")
+	clean = strings.ReplaceAll(clean, ":", "")
+	clean = strings.ReplaceAll(clean, " ", "")
+	return clean
+}
+
+func (c *GRPCClient) runOnce(ctx context.Context) error {
+	addr, transportCreds, err := BuildDialOptions(c.address, c.tlsConfig)
+	if err != nil {
+		return fmt.Errorf("grpc setup failed: %w", err)
 	}
 
 	conn, err := grpc.NewClient(addr,
@@ -108,7 +219,7 @@ func (c *GRPCClient) runOnce(ctx context.Context) error {
 		}),
 	)
 	if err != nil {
-		return fmt.Errorf("dial %s: %w", c.address, err)
+		return fmt.Errorf("dial %s: %w", addr, err)
 	}
 	defer conn.Close()
 
@@ -132,7 +243,7 @@ func (c *GRPCClient) registerCommands(ctx context.Context, client pb.NodeAgentSe
 
 	for _, info := range c.registry.ListCommands() {
 		protoType := pb.CommandType_COMMAND_TYPE_DEFAULT
-		if info.Kind == commands.KindCustom {
+		if info.Kind == dispatcher.KindCustom {
 			protoType = pb.CommandType_COMMAND_TYPE_CUSTOM
 		}
 		req := &pb.RegisterCommandRequest{
@@ -202,6 +313,9 @@ func (c *GRPCClient) connectStream(ctx context.Context, client pb.NodeAgentServi
 	// Metrics goroutine: collects and sends MetricPayload every metricsInterval.
 	go c.metricsLoop(streamCtx, results)
 
+	// Hypervisor goroutine: reports KVM/libvirt capacity once per session.
+	go c.sendHypervisorInfo(streamCtx, results)
+
 	// Receiver: handles ServerMessage frames (execute_job, stream_logs, etc.).
 	for {
 		msg, err := stream.Recv()
@@ -223,6 +337,8 @@ func (c *GRPCClient) connectStream(ctx context.Context, client pb.NodeAgentServi
 			c.startContainerStream(streamCtx, results)
 		case *pb.ServerMessage_StopContainers:
 			c.stopContainerStream()
+		case *pb.ServerMessage_CollectLogs:
+			go c.handleCollectLogs(streamCtx, p.CollectLogs, results)
 		case *pb.ServerMessage_ConfigureHealthCheck:
 			cfg := healthCheckConfig{
 				MonitorID:          p.ConfigureHealthCheck.GetMonitorId(),
@@ -235,10 +351,14 @@ func (c *GRPCClient) connectStream(ctx context.Context, client pb.NodeAgentServi
 				IntervalSeconds:    int(p.ConfigureHealthCheck.GetIntervalSeconds()),
 				FailureThreshold:   int(p.ConfigureHealthCheck.GetFailureThreshold()),
 				Enabled:            p.ConfigureHealthCheck.GetEnabled(),
+				AutoHealConfig:     p.ConfigureHealthCheck.GetAutoHealConfig(),
+				AutoHealState:      p.ConfigureHealthCheck.GetAutoHealState(),
 			}
 			c.healthMon.upsert(streamCtx, cfg, results)
 		case *pb.ServerMessage_StopHealthCheck:
 			c.healthMon.remove(p.StopHealthCheck.GetMonitorId())
+		case *pb.ServerMessage_RequestNetworkStats:
+			go c.handleRequestNetworkStats(streamCtx, p.RequestNetworkStats, results)
 		default:
 			log.Printf("gRPC: unknown ServerMessage payload type %T", p)
 		}
@@ -273,10 +393,6 @@ func (c *GRPCClient) heartbeatLoop(ctx context.Context, out chan<- *pb.NodeMessa
 }
 
 func (c *GRPCClient) sendHeartbeat(out chan<- *pb.NodeMessage) {
-	uptime, err := uptimeSeconds()
-	if err != nil {
-		uptime = 0
-	}
 	msg := &pb.NodeMessage{
 		Payload: &pb.NodeMessage_Heartbeat{
 			Heartbeat: &pb.HeartbeatPayload{
@@ -284,7 +400,6 @@ func (c *GRPCClient) sendHeartbeat(out chan<- *pb.NodeMessage) {
 			},
 		},
 	}
-	_ = uptime // HeartbeatPayload only carries node_id; uptime goes in MetricPayload
 	select {
 	case out <- msg:
 	default:
@@ -298,19 +413,19 @@ func (c *GRPCClient) metricsLoop(ctx context.Context, out chan<- *pb.NodeMessage
 	defer ticker.Stop()
 
 	// Send the first batch immediately.
-	c.sendMetrics(out)
+	c.sendMetrics(ctx, out)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			c.sendMetrics(out)
+			c.sendMetrics(ctx, out)
 		}
 	}
 }
 
-func (c *GRPCClient) sendMetrics(out chan<- *pb.NodeMessage) {
+func (c *GRPCClient) sendMetrics(ctx context.Context, out chan<- *pb.NodeMessage) {
 	m, err := c.metricsService.Collect()
 	if err != nil {
 		log.Printf("⚠️  gRPC: collect metrics: %v", err)
@@ -338,6 +453,9 @@ func (c *GRPCClient) sendMetrics(out chan<- *pb.NodeMessage) {
 	default:
 		log.Printf("⚠️  gRPC: metrics buffer full, skipping")
 	}
+
+	// Automatically push container metrics snapshot for background 24/7 history recording
+	c.sendContainerSnapshot(ctx, out)
 }
 
 // uptimeSeconds returns the system uptime in seconds.
@@ -357,7 +475,25 @@ func uptimeSeconds() (int64, error) {
 
 // handleJob executes the given job and sends the result back through results.
 func (c *GRPCClient) handleJob(ctx context.Context, job *pb.ExecuteJobPayload, results chan<- *pb.NodeMessage) {
-	log.Printf("⚙️  gRPC job %s: executing command %q", job.GetJobId(), job.GetCommandName())
+	jobID := job.GetJobId()
+	log.Printf("⚙️  gRPC job %s: executing command %q", jobID, job.GetCommandName())
+
+	// Idempotency check: if job has already completed, skip duplicate execution
+	if c.stateStore != nil && c.stateStore.HasJobBeenProcessed(jobID) {
+		log.Printf("ℹ️  gRPC job %s already processed (skipping duplicate execution)", jobID)
+		result := &pb.JobResultPayload{
+			JobId:  jobID,
+			Status: pb.JobStatus_JOB_STATUS_COMPLETED,
+			Output: "job already processed (idempotent skip)",
+		}
+		select {
+		case results <- &pb.NodeMessage{
+			Payload: &pb.NodeMessage_JobResult{JobResult: result},
+		}:
+		case <-ctx.Done():
+		}
+		return
+	}
 
 	// Build optional payload from the proto params field.
 	// params is a JSON object string — unmarshal it so commands can access
@@ -368,7 +504,7 @@ func (c *GRPCClient) handleJob(ctx context.Context, job *pb.ExecuteJobPayload, r
 	if p := job.GetParams(); p != "" {
 		if err := json.Unmarshal([]byte(p), &payload); err != nil {
 			payload = map[string]any{}
-			log.Printf("⚠️  gRPC job %s: could not parse params JSON: %v", job.GetJobId(), err)
+			log.Printf("⚠️  gRPC job %s: could not parse params JSON: %v", jobID, err)
 		}
 		payload["params"] = p // always expose raw JSON string
 	}
@@ -377,19 +513,22 @@ func (c *GRPCClient) handleJob(ctx context.Context, job *pb.ExecuteJobPayload, r
 
 	var result *pb.JobResultPayload
 	if res.Err != nil {
-		log.Printf("❌ gRPC job %s failed: %v", job.GetJobId(), res.Err)
+		log.Printf("❌ gRPC job %s failed: %v", jobID, res.Err)
 		result = &pb.JobResultPayload{
-			JobId:  job.GetJobId(),
+			JobId:  jobID,
 			Status: pb.JobStatus_JOB_STATUS_FAILED,
 			Output: res.Output,
 			Error:  res.Err.Error(),
 		}
 	} else {
-		log.Printf("✅ gRPC job %s completed", job.GetJobId())
+		log.Printf("✅ gRPC job %s completed", jobID)
 		result = &pb.JobResultPayload{
-			JobId:  job.GetJobId(),
+			JobId:  jobID,
 			Status: pb.JobStatus_JOB_STATUS_COMPLETED,
 			Output: res.Output,
+		}
+		if c.stateStore != nil {
+			_ = c.stateStore.RecordJob(jobID, "completed")
 		}
 	}
 

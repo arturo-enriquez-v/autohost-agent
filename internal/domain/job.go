@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package domain
 
 // Job represents a task received from the API to be executed by the agent.

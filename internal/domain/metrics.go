@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package domain
 
 // Metrics holds system resource usage data collected from the node.

@@ -9,6 +9,7 @@ Type=simple
 # Run as dedicated system user
 User=autohost
 Group=autohost
+SupplementaryGroups=docker libvirt kvm
 
 ExecStart=/usr/local/bin/autohost-agent /etc/autohost/config.yaml
 

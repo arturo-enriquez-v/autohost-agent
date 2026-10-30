@@ -1,20 +1,26 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package transport
 
 import (
-	pb "autohost-agent/internal/grpc/nodepb"
 	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"log"
-	"os/exec"
 	"time"
+
+	"autohost-agent/internal/adapters/docker"
+	pb "autohost-agent/internal/transport/nodepb"
+
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
-// streamDockerLogs tails "docker logs -f <container>" and forwards each line.
-// Both stdout and stderr of the container are merged into a single stream since
-// docker logs multiplex both onto the same output
-
+// streamDockerLogs tails container logs via Docker Engine API over UNIX socket
+// and forwards each line over gRPC. Both stdout and stderr are demultiplexed
+// and merged into a single stream.
 func (c *GRPCClient) streamDockerLogs(logCtx context.Context, cancel context.CancelFunc, containerName string, histLines int32, results chan<- *pb.NodeMessage) {
 	defer cancel()
 
@@ -31,63 +37,81 @@ func (c *GRPCClient) streamDockerLogs(logCtx context.Context, cancel context.Can
 		}
 	}
 
+	cli, err := docker.GetClient()
+	if err != nil {
+		log.Printf("⚠️  docker log stream client error: %v", err)
+		sendMsg("⚠️ docker client error: " + err.Error())
+		return
+	}
+
 	firstRun := true
 	for {
 		if logCtx.Err() != nil {
 			return
 		}
 
-		args := []string{"logs", "-f", "--timestamps"}
-		if firstRun && histLines > 0 {
-			args = append(args, "--tail", fmt.Sprintf("%d", histLines))
-		} else {
-			args = append(args, "--tail", "0")
+		opts := container.LogsOptions{
+			ShowStdout: true,
+			ShowStderr: true,
+			Follow:     true,
+			Timestamps: true,
 		}
-		args = append(args, containerName)
+		if firstRun && histLines > 0 {
+			opts.Tail = fmt.Sprintf("%d", histLines)
+		} else {
+			opts.Tail = "0"
+		}
 
-		cmd := exec.CommandContext(logCtx, "docker", args...)
-		// Merge stdout+stderr: container log lines appear on both streams.
-		pr, pw := io.Pipe()
-		cmd.Stdout = pw
-		cmd.Stderr = pw
+		iterCtx, iterCancel := context.WithCancel(logCtx)
 
-		if err := cmd.Start(); err != nil {
-			pw.CloseWithError(err)
-			pr.Close()
-			log.Printf("⚠️  docker logs start: %v", err)
+		logsReader, err := cli.ContainerLogs(iterCtx, containerName, opts)
+		if err != nil {
+			iterCancel()
+			log.Printf("⚠️  docker logs start error: %v", err)
 			sendMsg("⚠️ docker logs start error: " + err.Error())
 			return
 		}
+
 		log.Printf("📋 docker log stream started (container=%q lines=%d firstRun=%v)", containerName, histLines, firstRun)
 		firstRun = false
 
-		// iterCtx is cancelled when either this iteration ends or the outer
-		// logCtx is cancelled. Using a per-iteration context prevents goroutine
-		// accumulation across retries (e.g. when a container repeatedly restarts).
-		iterCtx, iterCancel := context.WithCancel(logCtx)
+		// Check if container has TTY enabled
+		isTTY := false
+		if inspect, inspErr := cli.ContainerInspect(iterCtx, containerName); inspErr == nil && inspect.Config != nil {
+			isTTY = inspect.Config.Tty
+		}
 
-		// Close the write end once the process finishes so the scanner exits.
-		// Also cancel iterCtx so the pr-close goroutine below exits promptly.
-		go func() {
-			cmd.Wait()
-			pw.Close()
-			iterCancel()
-		}()
+		var lineReader io.Reader
+		var cleanupReader func()
 
-		// Guarantee scanner.Scan() unblocks quickly when this iteration ends:
-		// close the read end of the pipe directly so that the blocking Scan()
-		// call returns EOF without waiting for the process kill → Wait → pw.Close() chain.
-		go func() {
-			<-iterCtx.Done()
-			pr.Close()
-		}()
+		if isTTY {
+			lineReader = logsReader
+			cleanupReader = func() {
+				logsReader.Close()
+				iterCancel()
+			}
+		} else {
+			pr, pw := io.Pipe()
+			go func() {
+				_, _ = stdcopy.StdCopy(pw, pw, logsReader)
+				_ = pw.Close()
+			}()
+			lineReader = pr
+			cleanupReader = func() {
+				_ = logsReader.Close()
+				_ = pr.Close()
+				_ = pw.Close()
+				iterCancel()
+			}
+		}
 
-		scanner := bufio.NewScanner(pr)
+		scanner := bufio.NewScanner(lineReader)
 		for scanner.Scan() {
 			line := scanner.Text()
 			if line == "" {
 				continue
 			}
+			line = sanitizeLogLine(line)
 			select {
 			case results <- &pb.NodeMessage{
 				Payload: &pb.NodeMessage_LogEntry{LogEntry: &pb.LogEntryPayload{
@@ -97,23 +121,22 @@ func (c *GRPCClient) streamDockerLogs(logCtx context.Context, cancel context.Can
 				}},
 			}:
 			case <-logCtx.Done():
-				cmd.Process.Kill()
-				pr.Close()
+				cleanupReader()
 				return
 			default:
-				// drop if the send buffer is full
+				// drop if send buffer is full
 			}
 		}
-		pr.Close()
-		iterCancel() // ensure the pr-close goroutine exits before next iteration
+
+		cleanupReader()
 
 		if logCtx.Err() != nil {
 			log.Printf("📋 docker log stream stopped (container=%q)", containerName)
 			return
 		}
 
-		log.Printf("⚠️  docker logs exited unexpectedly (container=%q), retrying in 3s…", containerName)
-		sendMsg("⚠️ docker logs exited, retrying in 3s…")
+		log.Printf("⚠️  docker logs stream disconnected (container=%q), retrying in 3s…", containerName)
+		sendMsg("⚠️ docker logs stream disconnected, retrying in 3s…")
 		select {
 		case <-logCtx.Done():
 			return

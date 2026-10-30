@@ -1,7 +1,10 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package docker
 
 import (
-	"autohost-agent/pkg/shell"
+	pexec "autohost-agent/internal/platform/exec"
 	"autohost-agent/pkg/sysinfo"
 
 	"fmt"
@@ -27,7 +30,7 @@ func Install() error {
 	}
 
 	// Script oficial SIN pipe ciego
-	if err := shell.ExecShell(`
+	if err := pexec.ExecShell(`
 set -e
 tmp="$(mktemp)"
 curl -fsSL https://get.docker.com -o "$tmp"
@@ -39,10 +42,10 @@ rm -f "$tmp"
 
 	// Arrancar/enable del daemon (si hay systemd)
 	if systemctlAvailable() {
-		_ = shell.Exec("sudo", "systemctl", "enable", "--now", "docker")
+		_ = pexec.Exec("sudo", "systemctl", "enable", "--now", "docker")
 	} else {
 		// fallback best-effort
-		_ = shell.Exec("sudo", "service", "docker", "start")
+		_ = pexec.Exec("sudo", "service", "docker", "start")
 	}
 
 	// Verificar CLI + daemon
@@ -63,18 +66,29 @@ func ensureCurl() error {
 
 	switch {
 	case strings.Contains(id, "debian") || strings.Contains(id, "ubuntu"):
-		return shell.ExecShell(`sudo apt-get update -y && sudo apt-get install -y curl ca-certificates && sudo update-ca-certificates`)
+		return pexec.ExecShell(`sudo apt-get update -y && sudo apt-get install -y curl ca-certificates && sudo update-ca-certificates`)
 
 	default:
-		return shell.Exec("which", "curl")
+		return pexec.Exec("which", "curl")
 	}
 }
 
 func systemctlAvailable() bool { return exec.Command("which", "systemctl").Run() == nil }
 
 func runningInContainer() bool {
+	// Detectar Docker
 	if _, err := os.Stat("/.dockerenv"); err == nil {
 		return true
+	}
+	// Detectar LXC/LXD/Incus
+	if _, err := os.Stat("/dev/lxc"); err == nil {
+		return true
+	}
+	// Check cgroups para otros entornos
+	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		if strings.Contains(string(data), "docker") || strings.Contains(string(data), "lxc") {
+			return true
+		}
 	}
 	// opcional: variable para forzar
 	return os.Getenv("AUTOHOST_IN_CONTAINER") == "true"

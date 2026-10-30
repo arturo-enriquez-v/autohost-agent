@@ -1,7 +1,10 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Arturo (AutoHost)
+
 package docker
 
 import (
-	"autohost-agent/pkg/shell"
+	"autohost-agent/internal/platform/exec"
 	"fmt"
 	"os"
 	"os/user"
@@ -27,10 +30,10 @@ func AddUserToDockerGroup() error {
 	}
 
 	// Crea grupo si falta y agrega usuario
-	if err := shell.ExecShell(`getent group docker >/dev/null 2>&1 || sudo groupadd docker`); err != nil {
+	if err := exec.ExecShell(`getent group docker >/dev/null 2>&1 || sudo groupadd docker`); err != nil {
 		fmt.Println("⚠️  No pude crear/verificar grupo docker:", err)
 	}
-	if err := shell.Exec("sudo", "usermod", "-aG", "docker", u); err != nil {
+	if err := exec.Exec("sudo", "usermod", "-aG", "docker", u); err != nil {
 		fmt.Printf("⚠️  No pude agregar el usuario '%s' al grupo docker: %v\n", u, err)
 		return err
 	}
