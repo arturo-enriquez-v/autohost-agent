@@ -9,9 +9,9 @@ import (
 	"log"
 	"time"
 
-	"autohost-agent/internal/commands"
-	pb "autohost-agent/internal/grpc/nodepb"
-	"autohost-agent/internal/infra/docker"
+	"autohost-agent/internal/adapters/docker"
+	"autohost-agent/internal/dispatcher"
+	pb "autohost-agent/internal/transport/nodepb"
 
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
@@ -195,7 +195,7 @@ func sleepWithBackoff(ctx context.Context, backoff *time.Duration, maxBackoff ti
 
 // sendContainerSnapshot calls ContainerListSnapshot and pushes the result to out.
 func (c *GRPCClient) sendContainerSnapshot(ctx context.Context, out chan<- *pb.NodeMessage) {
-	result := commands.ContainerListSnapshot(ctx)
+	result := dispatcher.ContainerListSnapshot(ctx)
 
 	payload := &pb.ContainerListPayload{}
 	if result.Err != nil {

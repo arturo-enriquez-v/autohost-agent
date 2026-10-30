@@ -12,7 +12,7 @@ import (
 	"syscall"
 
 	"autohost-agent/internal/agent"
-	"autohost-agent/pkg/dir"
+	"autohost-agent/internal/platform/paths"
 )
 
 // Inyectado en build time por goreleaser
@@ -34,7 +34,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	if err := dir.EnsureAutohostDirs(); err != nil {
+	if err := paths.EnsureAutohostDirs(); err != nil {
 		log.Fatalf("creating autohost dirs: %v", err)
 	}
 

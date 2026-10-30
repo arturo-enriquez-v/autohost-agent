@@ -7,8 +7,8 @@ import (
 	"context"
 	"log"
 
-	pb "autohost-agent/internal/grpc/nodepb"
-	"autohost-agent/internal/hypervisor"
+	"autohost-agent/internal/adapters/hypervisor"
+	pb "autohost-agent/internal/transport/nodepb"
 )
 
 // sendHypervisorInfo probes the host once per Connect session and reports the

@@ -5,51 +5,86 @@ package docker
 
 import (
 	"autohost-agent/internal/domain"
-	"autohost-agent/pkg/dir"
-	"autohost-agent/pkg/shell"
+	pexec "autohost-agent/internal/platform/exec"
+	"autohost-agent/internal/platform/paths"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/docker/docker/api/types/container"
 )
 
-func StopApp(app domain.AppName) error {
-	ymlPath := filepath.Join(dir.GetSubdir("apps"), string(app), "compose.yml")
+func Stop(appName domain.AppName) error {
+	ymlPath := filepath.Join(paths.GetSubdir("apps"), string(appName), "compose.yml")
 
-	return shell.ExecWithDir(filepath.Dir(ymlPath), "docker", "compose", "stop")
+	return pexec.ExecWithDir(filepath.Dir(ymlPath), "docker", "compose", "stop")
 }
 
-func StartApp(app domain.AppName) error {
-	ymlPath := filepath.Join(dir.GetSubdir("apps"), string(app), "compose.yml")
+func Start(appName domain.AppName) error {
+	appDir := filepath.Join(paths.GetSubdir("apps"), string(appName))
+	ymlPath := filepath.Join(appDir, "compose.yml")
 
 	// Validar si existe el archivo compose.yml
-	if _, err := os.Stat(ymlPath); os.IsNotExist(err) {
+	content, err := os.ReadFile(ymlPath)
+	if os.IsNotExist(err) {
 		return fmt.Errorf("el archivo de configuración no existe: %s", ymlPath)
+	} else if err != nil {
+		return fmt.Errorf("error al leer compose.yml: %w", err)
 	}
 
-	fmt.Printf("🔄 Levantando aplicación '%s'...\n", app)
+	// Validar seguridad del compose antes de levantar contenedores
+	if err := ValidateCompose(string(content), appDir); err != nil {
+		return fmt.Errorf("validación de seguridad fallida para %s: %w", appName, err)
+	}
 
-	// Usar Exec con working dir del compose
-	return shell.ExecWithDir(filepath.Dir(ymlPath), "docker", "compose", "up", "-d")
+	fmt.Printf("🔄 Levantando aplicación '%s'...\n", appName)
+	// Run from the app dir — compose.yml is auto-discovered, no -f needed.
+	output, err := pexec.ExecWithDirOutput(appDir, "docker", "compose", "up", "-d")
+	if err != nil {
+		return fmt.Errorf("exit status: %w\n%s", err, output)
+	}
+	return nil
 }
 
-func RemoveApp(app domain.AppName) error {
-	if err := app.Validate(); err != nil {
+func Remove(appName domain.AppName) error {
+	if err := appName.Validate(); err != nil {
 		return err
 	}
 
-	appDir := filepath.Join(dir.GetSubdir("apps"), string(app))
+	appDir := filepath.Join(paths.GetSubdir("apps"), string(appName))
 
-	if err := shell.ExecWithDir(appDir, "docker", "compose", "down"); err != nil {
+	if err := pexec.ExecWithDir(appDir, "docker", "compose", "down"); err != nil {
 		return fmt.Errorf("failed to stop app: %w", err)
 	}
 
-	return shell.Exec("rm", "-rf", appDir)
+	return pexec.Exec("rm", "-rf", appDir)
 }
 
-func GetAppStatus(app domain.AppName) (string, error) {
-	ymlPath := filepath.Join(dir.GetSubdir("apps"), string(app), "compose.yml")
+func ListContainers() error {
+	cli, err := GetClient()
+	if err != nil {
+		return err
+	}
+	containers, err := cli.ContainerList(context.Background(), container.ListOptions{})
+	if err != nil {
+		return err
+	}
+	fmt.Println("Contenedores en ejecución:")
+	for _, c := range containers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		fmt.Printf("%s\t%s\n", name, c.Status)
+	}
+	return nil
+}
+
+func GetAppStatus(appName domain.AppName) (string, error) {
+	ymlPath := filepath.Join(paths.GetSubdir("apps"), string(appName), "compose.yml")
 
 	cmd := exec.Command("docker", "compose", "ps", "--status=running")
 	cmd.Dir = filepath.Dir(ymlPath)

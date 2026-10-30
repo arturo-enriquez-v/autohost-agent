@@ -11,8 +11,8 @@ import (
 	"log"
 	"time"
 
-	pb "autohost-agent/internal/grpc/nodepb"
-	"autohost-agent/internal/infra/docker"
+	"autohost-agent/internal/adapters/docker"
+	pb "autohost-agent/internal/transport/nodepb"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"

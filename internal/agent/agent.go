@@ -7,11 +7,12 @@ import (
 	"context"
 	"log"
 
-	"autohost-agent/internal/api"
-	"autohost-agent/internal/commands"
+	"autohost-agent/internal/adapters/state"
+	"autohost-agent/internal/dispatcher"
 	"autohost-agent/internal/domain"
 	"autohost-agent/internal/services"
 	"autohost-agent/internal/transport"
+	"autohost-agent/internal/transport/http"
 )
 
 // Agent is the top-level orchestrator that coordinates all subsystems:
@@ -20,9 +21,10 @@ type Agent struct {
 	cfg             *Config
 	configPath      string
 	version         string
-	apiClient       *api.Client
+	apiClient       *httpclient.Client
 	grpcClient      *transport.GRPCClient
-	registry        *commands.Registry
+	registry        *dispatcher.Registry
+	stateStore      state.Store
 	lastKnownTokens struct {
 		access  string
 		refresh string
@@ -31,18 +33,23 @@ type Agent struct {
 
 // New creates and wires all agent subsystems.
 func New(cfg *Config, version string) *Agent {
-	var apiClient *api.Client
+	var apiClient *httpclient.Client
 	if cfg.RefreshToken != "" {
-		apiClient = api.NewClientWithRefresh(cfg.APIURL, cfg.AgentToken, cfg.RefreshToken)
+		apiClient = httpclient.NewClientWithRefresh(cfg.APIURL, cfg.AgentToken, cfg.RefreshToken)
 	} else {
-		apiClient = api.NewClient(cfg.APIURL, cfg.AgentToken)
+		apiClient = httpclient.NewClient(cfg.APIURL, cfg.AgentToken)
+	}
+
+	stateStore, err := state.New()
+	if err != nil {
+		log.Printf("⚠️  could not initialize local state store: %v", err)
 	}
 
 	metricsService := services.NewMetricsService()
 
-	registry := commands.NewRegistry()
-	commands.RegisterAll(registry)
-	if err := commands.RegisterCustomScripts(registry, domain.CustomCommandsDir); err != nil {
+	registry := dispatcher.NewRegistry()
+	dispatcher.RegisterAll(registry)
+	if err := dispatcher.RegisterCustomScripts(registry, domain.CustomCommandsDir); err != nil {
 		log.Printf("⚠️  could not load custom scripts: %v", err)
 	}
 
@@ -59,6 +66,9 @@ func New(cfg *Config, version string) *Agent {
 		registry,
 		metricsService,
 	)
+	if stateStore != nil {
+		grpcClient.SetStateStore(stateStore)
+	}
 
 	a := &Agent{
 		cfg:        cfg,
@@ -67,6 +77,7 @@ func New(cfg *Config, version string) *Agent {
 		apiClient:  apiClient,
 		grpcClient: grpcClient,
 		registry:   registry,
+		stateStore: stateStore,
 	}
 	a.lastKnownTokens.access = cfg.AgentToken
 	a.lastKnownTokens.refresh = cfg.RefreshToken

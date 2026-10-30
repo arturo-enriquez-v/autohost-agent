@@ -4,16 +4,31 @@
 package docker
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
+
+	"github.com/docker/docker/api/types/network"
 )
 
 func CreateDockerNetwork() error {
-	cmd := exec.Command("sudo", "docker", "network", "inspect", "autohost_net")
-	if err := cmd.Run(); err == nil {
+	cli, err := GetClient()
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	_, err = cli.NetworkInspect(ctx, "autohost_net", network.InspectOptions{})
+	if err == nil {
 		fmt.Println("✅ La red 'autohost_net' ya existe.")
 		return nil
 	}
-	cmd = exec.Command("sudo", "docker", "network", "create", "autohost_net")
-	return cmd.Run()
+
+	_, err = cli.NetworkCreate(ctx, "autohost_net", network.CreateOptions{
+		Driver: "bridge",
+	})
+	if err != nil {
+		return fmt.Errorf("crear red autohost_net: %w", err)
+	}
+	fmt.Println("✅ Red 'autohost_net' creada exitosamente.")
+	return nil
 }

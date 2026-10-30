@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	pb "autohost-agent/internal/grpc/nodepb"
+	pb "autohost-agent/internal/transport/nodepb"
 	"autohost-agent/internal/security"
 	"autohost-agent/internal/services/autoheal"
 )

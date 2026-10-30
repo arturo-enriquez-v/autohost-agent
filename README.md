@@ -117,16 +117,26 @@ make release     # Compilar binarios multi-plataforma + tag git en dist/
 .
 ├── cmd/agent/            # Entry point (acepta <config-path> o --version)
 ├── internal/
-│   ├── agent/            # Orquestador principal (config, lifecycle, run loop)
-│   ├── api/              # Cliente HTTP hacia la cloud API
-│   ├── commands/         # Registro de comandos (built-in + scripts custom)
-│   ├── domain/           # Tipos de dominio (Job, App, CustomCommand…)
-│   ├── grpc/             # Cliente gRPC (recepción de trabajos remotos)
-│   ├── services/         # Heartbeat, métricas, enrollment
-│   ├── security/         # Identidad del nodo y firma de requests
-│   ├── transport/        # gRPC client + WebSocket client
-│   └── adapters/         # Adaptadores de infraestructura
-├── pkg/sysinfo/          # Lectura de CPU, memoria y disco
+│   ├── agent/            # Orquestador principal y Composition Root (config, lifecycle, DI)
+│   ├── dispatcher/       # Router y despachador reactivo de Jobs (built-in + scripts custom)
+│   ├── domain/           # Tipos de dominio puros (Job, App, CustomCommand, Heartbeat, Metrics)
+│   ├── services/         # Servicios en background (heartbeat, métricas, enrollment, autoheal)
+│   ├── security/         # Identidad mTLS/tokens, firmado de payloads y sanitización
+│   ├── transport/        # Clientes de red y comunicación hacia el Control Plane
+│   │   ├── http/         # Cliente REST fallback para Heartbeat, Métricas y Jobs
+│   │   ├── nodepb/       # Protocol Buffers generados (gRPC)
+│   │   └── ws.go         # Cliente WebSocket y streams de diagnóstico
+│   ├── adapters/         # Adaptadores de infraestructura externa y persistencia
+│   │   ├── docker/       # Docker SDK, compose validator, swarm y gestión de contenedores
+│   │   ├── caddy/        # Enrutamiento dinámico y reverse proxy Caddy
+│   │   ├── hypervisor/   # Detección y telemetría de virtualización KVM/libvirt
+│   │   └── state/        # Almacén atómico local (idempotencia de jobs y cache de desired state)
+│   └── platform/         # Utilidades de bajo nivel del sistema
+│       ├── exec/         # Ejecución y runner seguro de comandos shell
+│       ├── fs/           # Operaciones del sistema de archivos
+│       └── paths/        # Gestión de rutas del sistema (/var/lib/autohost)
+├── pkg/
+│   └── sysinfo/          # Lectura de CPU, memoria, disco y red (paquete público reutilizable)
 ├── configs/agent.yaml    # Plantilla de configuración
 ├── scripts/install.sh    # Instalador automático
 ├── autohost-agent.service # Unidad systemd

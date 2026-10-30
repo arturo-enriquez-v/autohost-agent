@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"log"
 
-	"autohost-agent/internal/api"
-	pb "autohost-agent/internal/grpc/nodepb"
+	pb "autohost-agent/internal/transport/nodepb"
+	"autohost-agent/internal/transport/http"
 	"autohost-agent/pkg/sysinfo"
 )
 
@@ -34,7 +34,7 @@ func (c *GRPCClient) handleRequestNetworkStats(ctx context.Context, req *pb.Requ
 	conns, _ := sysinfo.GetActiveConnections()
 	reqs, rps, _ := sysinfo.GetRecentHTTPRequests()
 
-	payload := &api.NetworkStatsPayload{
+	payload := &httpclient.NetworkStatsPayload{
 		Interfaces:  ifaces,
 		Ports:       ports,
 		Peers:       peers,
