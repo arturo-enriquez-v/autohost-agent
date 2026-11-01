@@ -149,3 +149,54 @@ func TestBuildDialOptions_CertPinning(t *testing.T) {
 		t.Fatalf("expected BuildDialOptions to succeed with CertPin, got: %v", err)
 	}
 }
+
+func TestBuildDialOptions_mTLSClientCert(t *testing.T) {
+	tempDir := t.TempDir()
+	clientCertPath := filepath.Join(tempDir, "client.crt")
+	clientKeyPath := filepath.Join(tempDir, "client.key")
+
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject: pkix.Name{
+			CommonName: "node-123",
+		},
+		NotBefore:   time.Now().Add(-1 * time.Minute),
+		NotAfter:    time.Now().Add(1 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	certBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("failed to create client cert: %v", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certBytes})
+	keyDER, _ := x509.MarshalECPrivateKey(priv)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+
+	if err := os.WriteFile(clientCertPath, certPEM, 0644); err != nil {
+		t.Fatalf("write client cert: %v", err)
+	}
+	if err := os.WriteFile(clientKeyPath, keyPEM, 0600); err != nil {
+		t.Fatalf("write client key: %v", err)
+	}
+
+	_, creds, err := BuildDialOptions("grpc.autohost.cloud:9090", GRPCTLSConfig{
+		ClientCertPath: clientCertPath,
+		ClientKeyPath:  clientKeyPath,
+	})
+	if err != nil {
+		t.Fatalf("expected mTLS BuildDialOptions to succeed, got: %v", err)
+	}
+	if creds == nil {
+		t.Fatal("expected non-nil credentials")
+	}
+
+	// Missing key should fail
+	_, _, err = BuildDialOptions("grpc.autohost.cloud:9090", GRPCTLSConfig{
+		ClientCertPath: clientCertPath,
+	})
+	if err == nil {
+		t.Fatal("expected error when client key is missing")
+	}
+}

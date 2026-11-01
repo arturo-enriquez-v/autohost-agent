@@ -6,9 +6,13 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func GetAutohostDir() string {
+	if dir := strings.TrimSpace(os.Getenv("AUTOHOST_STORAGE_DIR")); dir != "" {
+		return dir
+	}
 	return "/var/lib/autohost"
 }
 

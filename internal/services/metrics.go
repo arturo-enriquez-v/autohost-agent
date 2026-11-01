@@ -5,6 +5,7 @@ package services
 
 import (
 	"autohost-agent/internal/domain"
+	"autohost-agent/internal/platform/paths"
 	"autohost-agent/pkg/sysinfo"
 )
 
@@ -14,7 +15,7 @@ type MetricsService struct{}
 // NewMetricsService creates a new metrics service.
 func NewMetricsService() *MetricsService { return &MetricsService{} }
 
-// Collect gathers CPU, memory, and disk metrics.
+// Collect gathers CPU, memory, disk, and hardware temperature metrics.
 func (s *MetricsService) Collect() (*domain.Metrics, error) {
 	m := &domain.Metrics{}
 
@@ -33,14 +34,19 @@ func (s *MetricsService) Collect() (*domain.Metrics, error) {
 	m.MemoryAvailableBytes = memInfo.AvailableBytes
 	m.MemoryUsagePercent = memInfo.UsagePercent
 
-	diskInfo, err := sysinfo.GetDiskInfo("/")
+	storagePath := paths.GetAutohostDir()
+	diskInfo, err := sysinfo.GetDiskInfo(storagePath)
 	if err != nil {
-		return nil, err
+		diskInfo, err = sysinfo.GetDiskInfo("/")
+		if err != nil {
+			return nil, err
+		}
 	}
 	m.DiskTotalBytes = diskInfo.TotalBytes
 	m.DiskUsedBytes = diskInfo.UsedBytes
 	m.DiskAvailableBytes = diskInfo.AvailableBytes
 	m.DiskUsagePercent = diskInfo.UsagePercent
+	m.CPUTempCelsius = sysinfo.GetCPUTemperatureCelsius()
 
 	return m, nil
 }
