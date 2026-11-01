@@ -8,4 +8,7 @@ agent_token: ""
 refresh_token: ""
 node_id: ""
 tags: []
-grpc_insecure: true
+grpc_insecure: false
+grpc_ca_cert: ""
+grpc_client_cert: ""
+grpc_client_key: ""

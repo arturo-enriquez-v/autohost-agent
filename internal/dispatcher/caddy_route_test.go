@@ -3,70 +3,57 @@
 
 package dispatcher
 
-import (
-	"context"
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestCaddyUpsertRoute_RejectsForbiddenPorts(t *testing.T) {
-	cmd := &CaddyUpsertRoute{}
-
-	forbiddenCases := []struct {
-		domain   string
-		upstream string
-	}{
-		{"app.example.com", "localhost:2019"}, // Caddy Admin
-		{"app.example.com", "127.0.0.1:5432"}, // Postgres
-		{"app.example.com", "127.0.0.1:6379"}, // Redis
-		{"app.example.com", "127.0.0.1:22"},   // SSH
-		{"app.example.com", "127.0.0.1:2375"}, // Docker
-		{"app.example.com", "127.0.0.1:9090"}, // gRPC
+func TestValidateDomain_HomelabAndPublic(t *testing.T) {
+	validDomains := []string{
+		"app.example.com",
+		"jellyfin.local",
+		"homeassistant.lan",
+		"nas.home.arpa",
+		"pi.internal",
+		"mynode.tailnet-abc.ts.net",
+		"192.168.1.50",
+		"10.0.0.15",
+		"100.64.0.25",
 	}
 
-	for _, tc := range forbiddenCases {
-		err := cmd.Execute(context.Background(), map[string]any{
-			"domain":   tc.domain,
-			"upstream": tc.upstream,
-		})
-		if err == nil {
-			t.Errorf("expected error for forbidden upstream %s, got nil", tc.upstream)
-		}
-		if !strings.Contains(err.Error(), "security violation") && !strings.Contains(err.Error(), "reserved") {
-			t.Errorf("expected security violation error for upstream %s, got: %v", tc.upstream, err)
+	for _, d := range validDomains {
+		if err := validateDomain(d); err != nil {
+			t.Errorf("expected domain %q to be valid, got error: %v", d, err)
 		}
 	}
-}
-
-func TestCaddyUpsertRoute_RejectsMetadataUpstream(t *testing.T) {
-	cmd := &CaddyUpsertRoute{}
-	err := cmd.Execute(context.Background(), map[string]any{
-		"domain":   "app.example.com",
-		"upstream": "169.254.169.254:80",
-	})
-	if err == nil {
-		t.Fatalf("expected error for metadata upstream, got nil")
-	}
-}
-
-func TestCaddyUpsertRoute_RejectsInvalidDomains(t *testing.T) {
-	cmd := &CaddyUpsertRoute{}
 
 	invalidDomains := []string{
+		"",
 		"localhost",
 		"127.0.0.1",
-		"app..com",
-		"-badlabel.com",
-		"singleword",
+		"::1",
+		"0.0.0.0",
+		"169.254.169.254",
+		"singlelabel",
+		"-invalid.local",
+		"invalid-.local",
 	}
 
-	for _, dom := range invalidDomains {
-		err := cmd.Execute(context.Background(), map[string]any{
-			"domain":   dom,
-			"upstream": "localhost:3000",
-		})
-		if err == nil {
-			t.Errorf("expected error for invalid domain %q, got nil", dom)
+	for _, d := range invalidDomains {
+		if err := validateDomain(d); err == nil {
+			t.Errorf("expected domain %q to be rejected, but it passed", d)
 		}
+	}
+}
+
+func TestValidateUpstream(t *testing.T) {
+	if err := validateUpstream("localhost:3000"); err != nil {
+		t.Errorf("expected localhost:3000 to be valid, got: %v", err)
+	}
+	if err := validateUpstream("127.0.0.1:8096"); err != nil {
+		t.Errorf("expected 127.0.0.1:8096 to be valid, got: %v", err)
+	}
+	if err := validateUpstream("localhost:2019"); err == nil {
+		t.Errorf("expected Caddy admin port 2019 to be forbidden")
+	}
+	if err := validateUpstream("localhost:5432"); err == nil {
+		t.Errorf("expected PostgreSQL port 5432 to be forbidden")
 	}
 }

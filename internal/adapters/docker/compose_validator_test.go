@@ -100,6 +100,24 @@ services:
 	}
 }
 
+func TestValidateCompose_HomelabHardwarePassthroughAllowed(t *testing.T) {
+	compose := `
+version: '3.8'
+services:
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/ttyUSB0:/dev/ttyUSB0
+    cap_add:
+      - NET_ADMIN
+`
+	err := ValidateCompose(compose, "/var/lib/autohost/apps/jellyfin")
+	if err != nil {
+		t.Fatalf("expected homelab GPU/USB passthrough to be allowed, got error: %v", err)
+	}
+}
+
 func TestValidateCompose_SecurityOptUnconfined(t *testing.T) {
 	compose := `
 version: '3.8'

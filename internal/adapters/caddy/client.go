@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -72,14 +73,23 @@ type upstream struct {
 type Route struct {
 	Domain   string `json:"domain"`
 	Upstream string `json:"upstream"`
+	TLSMode  string `json:"tls_mode,omitempty"`
 	// Managed is true when the route was created by autohost (has the autohost- @id prefix).
 	Managed bool `json:"managed"`
 }
 
+type autoHTTPSConfig struct {
+	Disable          bool     `json:"disable,omitempty"`
+	DisableRedirects bool     `json:"disable_redirects,omitempty"`
+	Skip             []string `json:"skip,omitempty"`
+	SkipCerts        []string `json:"skip_certificates,omitempty"`
+}
+
 // serverConfig is used to decode a single HTTP server from the Caddy config.
 type serverConfig struct {
-	Listen []string     `json:"listen"`
-	Routes []caddyRoute `json:"routes"`
+	Listen         []string         `json:"listen"`
+	Routes         []caddyRoute     `json:"routes"`
+	AutomaticHTTPS *autoHTTPSConfig `json:"automatic_https,omitempty"`
 }
 
 // extractUpstream walks a slice of handle blocks looking for the first
@@ -111,9 +121,80 @@ func buildRoute(domain, upstreamDial string) caddyRoute {
 	}
 }
 
+// IsTailscaleDomain returns true when the domain is a Tailscale MagicDNS hostname (*.ts.net).
+func IsTailscaleDomain(domain string) bool {
+	d := strings.ToLower(strings.TrimSpace(domain))
+	return strings.HasSuffix(d, ".ts.net")
+}
+
+// IsLocalOrPrivateDomain returns true when the domain is a local/homelab suffix
+// (.local, .lan, .home, .home.arpa, .internal, .localhost) or an IP address.
+func IsLocalOrPrivateDomain(domain string) bool {
+	d := strings.ToLower(strings.TrimSpace(domain))
+	if net.ParseIP(d) != nil {
+		return true
+	}
+	localSuffixes := []string{
+		".local",
+		".lan",
+		".home",
+		".home.arpa",
+		".internal",
+		".localhost",
+		".intranet",
+		".priv",
+	}
+	for _, s := range localSuffixes {
+		if strings.HasSuffix(d, s) {
+			return true
+		}
+	}
+	return false
+}
+
+func tlsPolicyID(domain string) string {
+	return routeIDPrefix + "tls-" + strings.ReplaceAll(domain, ".", "-")
+}
+
 // UpsertRoute creates or replaces a reverse-proxy route for the given domain.
 // upstreamDial is e.g. "localhost:3000".
 func (c *Client) UpsertRoute(domain, upstreamDial string) error {
+	return c.UpsertRouteWithTLS(domain, upstreamDial, "auto")
+}
+
+// UpsertRouteWithTLS creates or replaces a reverse-proxy route and configures
+// the appropriate TLS automation policy ("auto", "internal", or "http_only").
+func (c *Client) UpsertRouteWithTLS(domain, upstreamDial, tlsMode string) error {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	mode := strings.ToLower(strings.TrimSpace(tlsMode))
+	if mode == "" {
+		mode = "auto"
+	}
+
+	serverName, err := c.findOrCreateServer()
+	if err != nil {
+		return fmt.Errorf("find server: %w", err)
+	}
+
+	switch {
+	case mode == "http_only":
+		// Disable automatic HTTPS & redirects for this hostname so it serves over plain HTTP (:80).
+		_ = c.deleteTLSPolicy(domain)
+		_ = c.setAutoHTTPSSkip(serverName, domain, true)
+	case mode == "internal" || (mode == "auto" && IsLocalOrPrivateDomain(domain)):
+		// Configure Caddy's internal CA so it doesn't fail trying public ACME behind CGNAT.
+		_ = c.setAutoHTTPSSkip(serverName, domain, false)
+		_ = c.ensureInternalTLSPolicy(domain)
+	case mode == "auto" && IsTailscaleDomain(domain):
+		// Configure Caddy's Tailscale certificate manager for *.ts.net MagicDNS hosts.
+		_ = c.setAutoHTTPSSkip(serverName, domain, false)
+		_ = c.ensureTailscaleTLSPolicy(domain)
+	default:
+		// Public ACME ("auto" on a public domain): remove any custom override.
+		_ = c.setAutoHTTPSSkip(serverName, domain, false)
+		_ = c.deleteTLSPolicy(domain)
+	}
+
 	id := routeID(domain)
 	route := buildRoute(domain, upstreamDial)
 
@@ -127,17 +208,117 @@ func (c *Client) UpsertRoute(domain, upstreamDial string) error {
 		return nil
 	}
 
-	// New route — find (or create) the HTTPS server to append to.
-	serverName, err := c.findOrCreateServer()
-	if err != nil {
-		return fmt.Errorf("find server: %w", err)
-	}
-
 	return c.postJSON("/config/apps/http/servers/"+serverName+"/routes", body)
 }
 
-// DeleteRoute removes the reverse-proxy route for the given domain.
+func (c *Client) ensureInternalTLSPolicy(domain string) error {
+	policyID := tlsPolicyID(domain)
+	policy := map[string]any{
+		"@id":      policyID,
+		"subjects": []string{domain},
+		"issuers": []map[string]any{
+			{"module": "internal"},
+		},
+	}
+	return c.upsertTLSPolicy(policyID, policy)
+}
+
+func (c *Client) ensureTailscaleTLSPolicy(domain string) error {
+	policyID := tlsPolicyID(domain)
+	policy := map[string]any{
+		"@id":      policyID,
+		"subjects": []string{domain},
+		"get_certificate": []map[string]any{
+			{"via": "tailscale"},
+		},
+	}
+	return c.upsertTLSPolicy(policyID, policy)
+}
+
+func (c *Client) upsertTLSPolicy(policyID string, policy map[string]any) error {
+	body, err := json.Marshal(policy)
+	if err != nil {
+		return err
+	}
+
+	if err := c.putID(policyID, body); err == nil {
+		return nil
+	}
+
+	// Try appending to existing policies array; if /config/apps/tls doesn't exist yet, create it.
+	if err := c.postJSON("/config/apps/tls/automation/policies", body); err != nil {
+		tlsApp := map[string]any{
+			"automation": map[string]any{
+				"policies": []any{policy},
+			},
+		}
+		appBody, _ := json.Marshal(tlsApp)
+		return c.postJSON("/config/apps/tls", appBody)
+	}
+	return nil
+}
+
+func (c *Client) deleteTLSPolicy(domain string) error {
+	policyID := tlsPolicyID(domain)
+	req, err := http.NewRequest(http.MethodDelete, c.adminURL+"/id/"+policyID, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
+// setAutoHTTPSSkip adds or removes a domain from the HTTP server's automatic_https.skip list.
+// When skipped, Caddy serves the domain on :80 without provisioning TLS or redirecting HTTP to HTTPS.
+func (c *Client) setAutoHTTPSSkip(serverName, domain string, skip bool) error {
+	path := "/config/apps/http/servers/" + serverName + "/automatic_https"
+	resp, err := c.httpClient.Get(c.adminURL + path)
+	var cfg autoHTTPSConfig
+	if err == nil {
+		if resp.StatusCode == http.StatusOK {
+			_ = json.NewDecoder(resp.Body).Decode(&cfg)
+		}
+		resp.Body.Close()
+	}
+
+	var updated []string
+	found := false
+	for _, s := range cfg.Skip {
+		if strings.EqualFold(s, domain) {
+			found = true
+			if skip {
+				updated = append(updated, domain)
+			}
+		} else {
+			updated = append(updated, s)
+		}
+	}
+	if skip && !found {
+		updated = append(updated, domain)
+	}
+	if !skip && !found {
+		return nil
+	}
+	cfg.Skip = updated
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return c.postJSON(path, body)
+}
+
+// DeleteRoute removes the reverse-proxy route and any associated TLS policy for the given domain.
 func (c *Client) DeleteRoute(domain string) error {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	_ = c.deleteTLSPolicy(domain)
+	if srvName, err := c.findOrCreateServer(); err == nil && srvName != "" {
+		_ = c.setAutoHTTPSSkip(srvName, domain, false)
+	}
+
 	id := routeID(domain)
 	req, err := http.NewRequest(http.MethodDelete, c.adminURL+"/id/"+id, nil)
 	if err != nil {

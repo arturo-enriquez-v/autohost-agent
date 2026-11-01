@@ -29,9 +29,12 @@ import (
 type DockerVolumeRestore struct{}
 
 type RestorePayload struct {
-	ContainerName string   `json:"container_name"`
-	Volumes       []string `json:"volumes"`
-	S3            S3Config `json:"s3"`
+	ContainerName     string   `json:"container_name"`
+	Volumes           []string `json:"volumes"`
+	LocalPath         string   `json:"local_path"`
+	ParentDownloadURL string   `json:"parent_download_url"`
+	NodeToken         string   `json:"node_token"`
+	S3                S3Config `json:"s3"`
 }
 
 type RestoreResult struct {
@@ -63,10 +66,6 @@ func (c *DockerVolumeRestore) ExecuteWithOutput(ctx context.Context, payload map
 	if !safeContainerName.MatchString(req.ContainerName) {
 		return "", fmt.Errorf("invalid container name: %q", req.ContainerName)
 	}
-	if req.S3.Bucket == "" || req.S3.Endpoint == "" || req.S3.S3Key == "" {
-		return "", fmt.Errorf("invalid S3/R2 storage configuration or s3_key missing")
-	}
-
 	vols := req.Volumes
 	if len(vols) == 0 {
 		detected, err := inspectContainerVolumes(ctx, req.ContainerName)
@@ -87,8 +86,8 @@ func (c *DockerVolumeRestore) ExecuteWithOutput(ctx context.Context, payload map
 
 	tarFile := filepath.Join(tmpDir, "backup.tar.gz")
 
-	if err := downloadFromS3(ctx, req.S3, tarFile); err != nil {
-		return "", fmt.Errorf("S3 download failed: %w", err)
+	if err := fetchBackupFile(ctx, req.LocalPath, req.ParentDownloadURL, req.NodeToken, req.S3, tarFile); err != nil {
+		return "", fmt.Errorf("fetch volume backup failed: %w", err)
 	}
 
 	cli, cliErr := docker.GetClient()

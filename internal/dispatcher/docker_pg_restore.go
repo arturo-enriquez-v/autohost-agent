@@ -22,10 +22,13 @@ import (
 type DockerPgRestore struct{}
 
 type PgRestorePayload struct {
-	ContainerName string   `json:"container_name"`
-	PgUser        string   `json:"pg_user"`
-	Database      string   `json:"database"` // empty = restore to default (used with pg_dumpall output)
-	S3            S3Config `json:"s3"`
+	ContainerName     string   `json:"container_name"`
+	PgUser            string   `json:"pg_user"`
+	Database          string   `json:"database"` // empty = restore to default (used with pg_dumpall output)
+	LocalPath         string   `json:"local_path"`
+	ParentDownloadURL string   `json:"parent_download_url"`
+	NodeToken         string   `json:"node_token"`
+	S3                S3Config `json:"s3"`
 }
 
 type PgRestoreResult struct {
@@ -57,10 +60,6 @@ func (c *DockerPgRestore) ExecuteWithOutput(ctx context.Context, payload map[str
 	if !safeContainerName.MatchString(req.ContainerName) {
 		return "", fmt.Errorf("invalid container name: %q", req.ContainerName)
 	}
-	if req.S3.Bucket == "" || req.S3.Endpoint == "" || req.S3.S3Key == "" {
-		return "", fmt.Errorf("invalid S3/R2 storage configuration or s3_key missing")
-	}
-
 	pgEnv := getPgContainerEnv(ctx, req.ContainerName)
 
 	pgUser := req.PgUser
@@ -72,7 +71,7 @@ func (c *DockerPgRestore) ExecuteWithOutput(ctx context.Context, payload map[str
 		}
 	}
 
-	// Download the SQL dump from S3
+	// Download or copy the SQL dump
 	tmpFile, err := os.CreateTemp("", "autohost-pgrestore-*.sql.gz")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %w", err)
@@ -81,8 +80,8 @@ func (c *DockerPgRestore) ExecuteWithOutput(ctx context.Context, payload map[str
 	defer os.Remove(dumpFilePath)
 	_ = tmpFile.Close()
 
-	if err := downloadFromS3(ctx, req.S3, dumpFilePath); err != nil {
-		return "", fmt.Errorf("S3 download failed: %w", err)
+	if err := fetchBackupFile(ctx, req.LocalPath, req.ParentDownloadURL, req.NodeToken, req.S3, dumpFilePath); err != nil {
+		return "", fmt.Errorf("fetch SQL backup failed: %w", err)
 	}
 
 	// Pre-clean existing target databases so restore cleanly replaces existing data

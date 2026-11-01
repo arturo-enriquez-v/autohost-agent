@@ -23,10 +23,15 @@ import (
 type DockerPgBackup struct{}
 
 type PgBackupPayload struct {
-	ContainerName string   `json:"container_name"`
-	PgUser        string   `json:"pg_user"`
-	Database      string   `json:"database"` // empty = pg_dumpall
-	S3            S3Config `json:"s3"`
+	ContainerName      string   `json:"container_name"`
+	PgUser             string   `json:"pg_user"`
+	Database           string   `json:"database"` // empty = pg_dumpall
+	BackupRecordID     string   `json:"backup_record_id"`
+	StorageDestination string   `json:"storage_destination"`
+	RetentionCount     int      `json:"retention_count"`
+	APIURL             string   `json:"api_url"`
+	NodeToken          string   `json:"node_token"`
+	S3                 S3Config `json:"s3"`
 }
 
 type PgBackupResult struct {
@@ -59,8 +64,10 @@ func (c *DockerPgBackup) ExecuteWithOutput(ctx context.Context, payload map[stri
 	if !safeContainerName.MatchString(req.ContainerName) {
 		return "", fmt.Errorf("invalid container name: %q", req.ContainerName)
 	}
-	if req.S3.Bucket == "" || req.S3.Endpoint == "" || req.S3.AccessKeyID == "" {
-		return "", fmt.Errorf("invalid S3/R2 storage configuration")
+	if req.StorageDestination == "s3" {
+		if req.S3.Bucket == "" || req.S3.Endpoint == "" || req.S3.AccessKeyID == "" {
+			return "", fmt.Errorf("invalid S3/R2 storage configuration")
+		}
 	}
 
 	pgEnv := getPgContainerEnv(ctx, req.ContainerName)
@@ -134,25 +141,20 @@ func (c *DockerPgBackup) ExecuteWithOutput(ctx context.Context, payload map[stri
 		return "", fmt.Errorf("pg_dump produced a suspiciously small output (%d bytes), possible error in dump", fileSizeBytes)
 	}
 
-	s3Key := req.S3.S3Key
-	if s3Key == "" {
-		s3Key = fmt.Sprintf("backups/%s/%s_%s.sql.gz", req.ContainerName, req.ContainerName, time.Now().Format("20060102_150405"))
-	}
+	nowStr := time.Now().Format("20060102_150405")
+	filename := fmt.Sprintf("%s_%s.sql.gz", nowStr, req.ContainerName)
 
-	if err := uploadToS3(ctx, req.S3, dumpFilePath, s3Key); err != nil {
-		return "", fmt.Errorf("S3 upload failed: %w", err)
-	}
-
-	duration := time.Since(startTime).Milliseconds()
-
-	result := PgBackupResult{
-		S3Key:         s3Key,
-		FileSizeBytes: fileSizeBytes,
-		DurationMS:    duration,
-	}
-
-	resBytes, _ := json.Marshal(result)
-	return string(resBytes), nil
+	return saveAndStoreBackup(ctx, StorageOptions{
+		ContainerName:      req.ContainerName,
+		BackupRecordID:     req.BackupRecordID,
+		StorageDestination: req.StorageDestination,
+		APIURL:             req.APIURL,
+		NodeToken:          req.NodeToken,
+		RetentionCount:     req.RetentionCount,
+		Filename:           filename,
+		TempFilePath:       dumpFilePath,
+		S3:                 req.S3,
+	}, startTime)
 }
 
 type PgContainerEnv struct {

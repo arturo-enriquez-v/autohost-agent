@@ -21,6 +21,12 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) cmd/agent/main.go
 	@echo "✅ Build complete: ./$(BINARY_NAME)"
 
+build-multiarch:
+	@mkdir -p dist
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY_NAME)-linux-amd64 cmd/agent/main.go
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY_NAME)-linux-arm64 cmd/agent/main.go
+	@echo "✅ Multi-arch binaries built in dist/ (linux/amd64, linux/arm64)"
+
 release:
 	@CURRENT=$$(git describe --tags --always --dirty 2>/dev/null || echo "dev"); \
 	echo "📌 Versión actual: $$CURRENT"; \
@@ -290,7 +296,6 @@ node-setup: node-update
 	 echo "🔗 Enrolando nodo $(NODE_NAME) en http://$(HOST_IP):$(API_PORT)..."; \
 	 ssh $(NODE_HOST) "sudo autohost enroll link --api http://$(HOST_IP):$(API_PORT) --token $$TOKEN --name $(NODE_NAME) && \
 		sudo sed -i 's|grpc_address:.*|grpc_address: \"$(HOST_IP):$(GRPC_PORT)\"|g' /etc/autohost/config.yaml && \
-		if ! sudo grep -q 'grpc_insecure' /etc/autohost/config.yaml; then echo 'grpc_insecure: true' | sudo tee -a /etc/autohost/config.yaml; fi && \
 		sudo systemctl daemon-reload && \
 		sudo systemctl enable --now autohost-agent && \
 		sudo systemctl restart autohost-agent"; \

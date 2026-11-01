@@ -53,6 +53,7 @@ func (c *CaddyUpsertRoute) Execute(_ context.Context, payload map[string]any) er
 	if !ok || upstream == "" {
 		return fmt.Errorf("caddy.upsert-route: missing upstream")
 	}
+	tlsMode, _ := payload["tls_mode"].(string)
 
 	if err := validateDomain(domain); err != nil {
 		return fmt.Errorf("caddy.upsert-route: invalid domain: %w", err)
@@ -66,31 +67,36 @@ func (c *CaddyUpsertRoute) Execute(_ context.Context, payload map[string]any) er
 		return fmt.Errorf("caddy.upsert-route: Caddy admin API not reachable at localhost:2019")
 	}
 
-	if err := caddyClient.UpsertRoute(domain, upstream); err != nil {
+	if err := caddyClient.UpsertRouteWithTLS(domain, upstream, tlsMode); err != nil {
 		return fmt.Errorf("caddy.upsert-route: %w", err)
 	}
-	fmt.Printf("✅ Caddy: route %s → %s configured\n", domain, upstream)
+	fmt.Printf("✅ Caddy: route %s → %s configured (tls_mode=%s)\n", domain, upstream, tlsMode)
 	return nil
 }
 
-// validateDomain ensures domain is a valid FQDN and not localhost or raw IP.
+// validateDomain ensures domain is a valid FQDN, homelab local domain (.local, .lan, .home.arpa),
+// Tailscale MagicDNS (*.ts.net), or non-loopback LAN/VPN IP address.
 func validateDomain(domain string) error {
 	domain = strings.TrimSpace(strings.ToLower(domain))
 	if domain == "" {
 		return errors.New("domain is required")
 	}
-	if domain == "localhost" || strings.HasPrefix(domain, "localhost:") || strings.HasSuffix(domain, ".localhost") {
-		return errors.New("domain cannot be localhost")
+	if domain == "localhost" || strings.HasPrefix(domain, "localhost:") {
+		return errors.New("domain cannot be bare localhost")
 	}
 	if ip := net.ParseIP(domain); ip != nil {
-		return errors.New("domain cannot be an IP address literal")
+		if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
+			return errors.New("domain cannot be a loopback, link-local, or multicast IP address")
+		}
+		// Allow private LAN (RFC 1918) and Tailscale/Headscale VPN (100.64.0.0/10) IP addresses in self-hosted homelab mode
+		return nil
 	}
 	if len(domain) > 253 {
 		return errors.New("domain exceeds maximum length of 253 characters")
 	}
 	labels := strings.Split(domain, ".")
 	if len(labels) < 2 {
-		return errors.New("domain must have at least two labels (e.g. app.example.com)")
+		return errors.New("domain must have at least two labels (e.g. app.local or app.example.com)")
 	}
 	for _, part := range labels {
 		if len(part) == 0 || len(part) > 63 {

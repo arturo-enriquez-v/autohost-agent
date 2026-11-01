@@ -17,9 +17,11 @@ type Config struct {
 	RefreshToken string   `yaml:"refresh_token"`
 	NodeID       string   `yaml:"node_id"`
 	Tags         []string `yaml:"tags"`
-	GRPCInsecure bool     `yaml:"grpc_insecure"`
-	GRPCCACert   string   `yaml:"grpc_ca_cert"`
-	GRPCCertPin  string   `yaml:"grpc_cert_pin"`
+	GRPCInsecure   bool     `yaml:"grpc_insecure"`
+	GRPCCACert     string   `yaml:"grpc_ca_cert"`
+	GRPCClientCert string   `yaml:"grpc_client_cert"`
+	GRPCClientKey  string   `yaml:"grpc_client_key"`
+	GRPCCertPin    string   `yaml:"grpc_cert_pin"`
 }
 
 func Load(path string) (*Config, error) {

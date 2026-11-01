@@ -34,10 +34,15 @@ type S3Config struct {
 }
 
 type BackupPayload struct {
-	ContainerName  string   `json:"container_name"`
-	Volumes        []string `json:"volumes"`
-	PauseContainer bool     `json:"pause_container"`
-	S3             S3Config `json:"s3"`
+	ContainerName      string   `json:"container_name"`
+	Volumes            []string `json:"volumes"`
+	PauseContainer     bool     `json:"pause_container"`
+	BackupRecordID     string   `json:"backup_record_id"`
+	StorageDestination string   `json:"storage_destination"`
+	RetentionCount     int      `json:"retention_count"`
+	APIURL             string   `json:"api_url"`
+	NodeToken          string   `json:"node_token"`
+	S3                 S3Config `json:"s3"`
 }
 
 type BackupResult struct {
@@ -70,8 +75,10 @@ func (c *DockerVolumeBackup) ExecuteWithOutput(ctx context.Context, payload map[
 	if !safeContainerName.MatchString(req.ContainerName) {
 		return "", fmt.Errorf("invalid container name: %q", req.ContainerName)
 	}
-	if req.S3.Bucket == "" || req.S3.Endpoint == "" || req.S3.AccessKeyID == "" {
-		return "", fmt.Errorf("invalid S3/R2 storage configuration")
+	if req.StorageDestination == "s3" {
+		if req.S3.Bucket == "" || req.S3.Endpoint == "" || req.S3.AccessKeyID == "" {
+			return "", fmt.Errorf("invalid S3/R2 storage configuration")
+		}
 	}
 
 	vols := req.Volumes
@@ -122,31 +129,20 @@ func (c *DockerVolumeBackup) ExecuteWithOutput(ctx context.Context, payload map[
 	}
 	_ = tmpFile.Close()
 
-	fi, err := os.Stat(tarFilePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to stat backup file: %w", err)
-	}
-	fileSizeBytes := fi.Size()
+	nowStr := time.Now().Format("20060102_150405")
+	filename := fmt.Sprintf("%s_%s.tar.gz", nowStr, req.ContainerName)
 
-	s3Key := req.S3.S3Key
-	if s3Key == "" {
-		s3Key = fmt.Sprintf("backups/%s/%s_%s.tar.gz", req.ContainerName, req.ContainerName, time.Now().Format("20060102_150405"))
-	}
-
-	if err := uploadToS3(ctx, req.S3, tarFilePath, s3Key); err != nil {
-		return "", fmt.Errorf("S3 upload failed: %w", err)
-	}
-
-	duration := time.Since(startTime).Milliseconds()
-
-	result := BackupResult{
-		S3Key:         s3Key,
-		FileSizeBytes: fileSizeBytes,
-		DurationMS:    duration,
-	}
-
-	resBytes, _ := json.Marshal(result)
-	return string(resBytes), nil
+	return saveAndStoreBackup(ctx, StorageOptions{
+		ContainerName:      req.ContainerName,
+		BackupRecordID:     req.BackupRecordID,
+		StorageDestination: req.StorageDestination,
+		APIURL:             req.APIURL,
+		NodeToken:          req.NodeToken,
+		RetentionCount:     req.RetentionCount,
+		Filename:           filename,
+		TempFilePath:       tarFilePath,
+		S3:                 req.S3,
+	}, startTime)
 }
 
 func inspectContainerVolumes(ctx context.Context, containerName string) ([]string, error) {

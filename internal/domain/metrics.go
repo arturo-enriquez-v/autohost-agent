@@ -14,4 +14,5 @@ type Metrics struct {
 	DiskUsedBytes        uint64  `json:"disk_used_bytes"`
 	DiskAvailableBytes   uint64  `json:"disk_available_bytes"`
 	DiskUsagePercent     float64 `json:"disk_usage_percent"`
+	CPUTempCelsius       float64 `json:"cpu_temp_celsius,omitempty"`
 }

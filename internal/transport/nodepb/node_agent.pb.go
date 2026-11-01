@@ -629,6 +629,7 @@ type MetricPayload struct {
 	DiskAvailableBytes uint64                 `protobuf:"varint,8,opt,name=disk_available_bytes,json=diskAvailableBytes,proto3" json:"disk_available_bytes,omitempty"`
 	DiskUsagePercent   float32                `protobuf:"fixed32,9,opt,name=disk_usage_percent,json=diskUsagePercent,proto3" json:"disk_usage_percent,omitempty"`
 	UptimeSeconds      int64                  `protobuf:"varint,10,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
+	CpuTempCelsius     float32                `protobuf:"fixed32,11,opt,name=cpu_temp_celsius,json=cpuTempCelsius,proto3" json:"cpu_temp_celsius,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -729,6 +730,13 @@ func (x *MetricPayload) GetDiskUsagePercent() float32 {
 func (x *MetricPayload) GetUptimeSeconds() int64 {
 	if x != nil {
 		return x.UptimeSeconds
+	}
+	return 0
+}
+
+func (x *MetricPayload) GetCpuTempCelsius() float32 {
+	if x != nil {
+		return x.CpuTempCelsius
 	}
 	return 0
 }
@@ -1907,6 +1915,7 @@ type MetricRequest struct {
 	DiskAvailableBytes uint64                 `protobuf:"varint,8,opt,name=disk_available_bytes,json=diskAvailableBytes,proto3" json:"disk_available_bytes,omitempty"`
 	DiskUsagePercent   float32                `protobuf:"fixed32,9,opt,name=disk_usage_percent,json=diskUsagePercent,proto3" json:"disk_usage_percent,omitempty"`
 	UptimeSeconds      int64                  `protobuf:"varint,10,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
+	CpuTempCelsius     float32                `protobuf:"fixed32,11,opt,name=cpu_temp_celsius,json=cpuTempCelsius,proto3" json:"cpu_temp_celsius,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -2007,6 +2016,13 @@ func (x *MetricRequest) GetDiskUsagePercent() float32 {
 func (x *MetricRequest) GetUptimeSeconds() int64 {
 	if x != nil {
 		return x.UptimeSeconds
+	}
+	return 0
+}
+
+func (x *MetricRequest) GetCpuTempCelsius() float32 {
+	if x != nil {
+		return x.CpuTempCelsius
 	}
 	return 0
 }
@@ -2399,7 +2415,7 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x0fram_total_bytes\x18\b \x01(\x04R\rramTotalBytes\x12.\n" +
 	"\x13storage_total_bytes\x18\t \x01(\x04R\x11storageTotalBytes\x126\n" +
 	"\x17storage_available_bytes\x18\n" +
-	" \x01(\x04R\x15storageAvailableBytes\"\xbe\x03\n" +
+	" \x01(\x04R\x15storageAvailableBytes\"\xe8\x03\n" +
 	"\rMetricPayload\x12*\n" +
 	"\x11cpu_usage_percent\x18\x01 \x01(\x02R\x0fcpuUsagePercent\x12&\n" +
 	"\x0fram_total_bytes\x18\x02 \x01(\x04R\rramTotalBytes\x12$\n" +
@@ -2411,7 +2427,8 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x14disk_available_bytes\x18\b \x01(\x04R\x12diskAvailableBytes\x12,\n" +
 	"\x12disk_usage_percent\x18\t \x01(\x02R\x10diskUsagePercent\x12%\n" +
 	"\x0euptime_seconds\x18\n" +
-	" \x01(\x03R\ruptimeSeconds\"\xbe\x06\n" +
+	" \x01(\x03R\ruptimeSeconds\x12(\n" +
+	"\x10cpu_temp_celsius\x18\v \x01(\x02R\x0ecpuTempCelsius\"\xbe\x06\n" +
 	"\rServerMessage\x12C\n" +
 	"\vexecute_job\x18\x01 \x01(\v2 .node_agent.v1.ExecuteJobPayloadH\x00R\n" +
 	"executeJob\x12C\n" +
@@ -2501,7 +2518,7 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\n" +
 	"containers\x18\x01 \x03(\v2\x1c.node_agent.v1.ContainerInfoR\n" +
 	"containers\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\xbe\x03\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xe8\x03\n" +
 	"\rMetricRequest\x12*\n" +
 	"\x11cpu_usage_percent\x18\x01 \x01(\x02R\x0fcpuUsagePercent\x12&\n" +
 	"\x0fram_total_bytes\x18\x02 \x01(\x04R\rramTotalBytes\x12$\n" +
@@ -2513,7 +2530,8 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x14disk_available_bytes\x18\b \x01(\x04R\x12diskAvailableBytes\x12,\n" +
 	"\x12disk_usage_percent\x18\t \x01(\x02R\x10diskUsagePercent\x12%\n" +
 	"\x0euptime_seconds\x18\n" +
-	" \x01(\x03R\ruptimeSeconds\"*\n" +
+	" \x01(\x03R\ruptimeSeconds\x12(\n" +
+	"\x10cpu_temp_celsius\x18\v \x01(\x02R\x0ecpuTempCelsius\"*\n" +
 	"\x0eMetricResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\"\xa6\x01\n" +
 	"\x12CollectLogsPayload\x12\x1d\n" +

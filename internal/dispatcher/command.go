@@ -167,6 +167,8 @@ func RegisterAll(r *Registry) {
 	r.Register("docker.volume.restore", &DockerVolumeRestore{})
 	r.Register("docker.pg.backup", &DockerPgBackup{})
 	r.Register("docker.pg.restore", &DockerPgRestore{})
+	r.Register("docker.image.backup", &DockerImageBackup{})
+	r.Register("docker.image.restore", &DockerImageRestore{})
 	r.Register("swarm.init", &SwarmInitCommand{})
 	r.Register("swarm.join", &SwarmJoinCommand{})
 	r.Register("swarm.leave", &SwarmLeaveCommand{})

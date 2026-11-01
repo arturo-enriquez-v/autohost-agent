@@ -33,9 +33,11 @@ import (
 
 // GRPCTLSConfig holds TLS security options for the gRPC transport.
 type GRPCTLSConfig struct {
-	Insecure   bool   // If true, allows plaintext ONLY for localhost/loopback addresses.
-	CACertPath string // Optional path to custom CA certificate file.
-	CertPin    string // Optional SHA-256 fingerprint for certificate pinning.
+	Insecure       bool   // If true, allows plaintext ONLY for localhost/loopback addresses.
+	CACertPath     string // Optional path to custom CA certificate file.
+	ClientCertPath string // Path to client certificate file for mTLS.
+	ClientKeyPath  string // Path to client private key file for mTLS.
+	CertPin        string // Optional SHA-256 fingerprint for certificate pinning.
 }
 
 // IdempotencyStore defines the contract for recording and checking job execution status.
@@ -155,6 +157,18 @@ func BuildDialOptions(rawAddr string, tlsCfg GRPCTLSConfig) (string, grpc.DialOp
 			return "", nil, fmt.Errorf("failed to parse valid PEM CA certificate from %s", tlsCfg.CACertPath)
 		}
 		tlsConfig.RootCAs = certPool
+	}
+
+	// 4. Client Certificate & Key (mTLS)
+	if tlsCfg.ClientCertPath != "" || tlsCfg.ClientKeyPath != "" {
+		if tlsCfg.ClientCertPath == "" || tlsCfg.ClientKeyPath == "" {
+			return "", nil, errors.New("both grpc_client_cert and grpc_client_key must be provided for mTLS")
+		}
+		clientCert, err := tls.LoadX509KeyPair(tlsCfg.ClientCertPath, tlsCfg.ClientKeyPath)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to load mTLS client certificate/key (%s, %s): %w", tlsCfg.ClientCertPath, tlsCfg.ClientKeyPath, err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{clientCert}
 	}
 
 	// 4. Certificate Pinning (SHA-256 fingerprint)
@@ -445,6 +459,7 @@ func (c *GRPCClient) sendMetrics(ctx context.Context, out chan<- *pb.NodeMessage
 				DiskAvailableBytes: m.DiskAvailableBytes,
 				DiskUsagePercent:   float32(m.DiskUsagePercent),
 				UptimeSeconds:      uptime,
+				CpuTempCelsius:     float32(m.CPUTempCelsius),
 			},
 		},
 	}

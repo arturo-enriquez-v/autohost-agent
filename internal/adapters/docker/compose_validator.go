@@ -153,9 +153,11 @@ func validateService(svcName string, svc composeService, appDir string, topLevel
 		}
 	}
 
-	// 4. Check devices
-	if len(svc.Devices) > 0 {
-		return fmt.Errorf("%w: requested %d device mappings", ErrForbiddenDevice, len(svc.Devices))
+	// 4. Check devices (allow safe homelab hardware passthrough like GPU /dev/dri and USB serial dongles; block raw block devices)
+	for _, dev := range svc.Devices {
+		if err := validateDevice(dev); err != nil {
+			return err
+		}
 	}
 
 	// 5. Check security options
@@ -183,6 +185,41 @@ func validateService(svcName string, svc composeService, appDir string, topLevel
 func isHostNamespace(ns string) bool {
 	clean := strings.ToLower(strings.TrimSpace(ns))
 	return clean == "host"
+}
+
+// allowedHardwareDevicePrefixes lists safe peripheral and accelerator devices for homelab containers
+// (GPU/QuickSync, Raspberry Pi V4L2, Zigbee/Z-Wave USB serial dongles, WireGuard TUN, audio).
+var allowedHardwareDevicePrefixes = []string{
+	"/dev/dri",
+	"/dev/vchiq",
+	"/dev/vcsm",
+	"/dev/video",
+	"/dev/ttyUSB",
+	"/dev/ttyACM",
+	"/dev/serial/",
+	"/dev/net/tun",
+	"/dev/snd",
+	"/dev/bus/usb/",
+}
+
+func validateDevice(dev any) error {
+	raw, ok := dev.(string)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fmt.Errorf("%w: invalid device mapping %v", ErrForbiddenDevice, dev)
+	}
+	parts := strings.Split(strings.TrimSpace(raw), ":")
+	hostDev := filepath.Clean(strings.TrimSpace(parts[0]))
+	if strings.Contains(parts[0], "..") {
+		return fmt.Errorf("%w: path traversal in device %q", ErrForbiddenDevice, raw)
+	}
+
+	for _, prefix := range allowedHardwareDevicePrefixes {
+		if hostDev == prefix || strings.HasPrefix(hostDev, prefix) {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("%w: device %q is not in the allowed hardware passthrough list", ErrForbiddenDevice, hostDev)
 }
 
 func validateVolume(vol any, appDir string, topLevelVolumes map[string]any) error {
