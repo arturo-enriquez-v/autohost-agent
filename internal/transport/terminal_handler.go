@@ -11,19 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"sync"
-	"syscall"
-	"unsafe"
 
 	"autohost-agent/internal/platform/paths"
 	pb "autohost-agent/internal/transport/nodepb"
 )
-
-type ptyWinsize struct {
-	Row    uint16
-	Col    uint16
-	Xpixel uint16
-	Ypixel uint16
-}
 
 type activeTerminalSession struct {
 	sessionID string
@@ -44,53 +35,6 @@ func newTerminalManager() *terminalManager {
 	}
 }
 
-func openLinuxPTY(cols, rows uint32) (*os.File, *os.File, error) {
-	ptmx, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open /dev/ptmx: %w", err)
-	}
-
-	var ptyno uint32
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, ptmx.Fd(), syscall.TIOCGPTN, uintptr(unsafe.Pointer(&ptyno))); errno != 0 {
-		_ = ptmx.Close()
-		return nil, nil, fmt.Errorf("TIOCGPTN: %w", errno)
-	}
-
-	var unlock int32
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, ptmx.Fd(), syscall.TIOCSPTLCK, uintptr(unsafe.Pointer(&unlock))); errno != 0 {
-		_ = ptmx.Close()
-		return nil, nil, fmt.Errorf("TIOCSPTLCK: %w", errno)
-	}
-
-	slavePath := fmt.Sprintf("/dev/pts/%d", ptyno)
-	tty, err := os.OpenFile(slavePath, os.O_RDWR|syscall.O_NOCTTY, 0)
-	if err != nil {
-		_ = ptmx.Close()
-		return nil, nil, fmt.Errorf("open %s: %w", slavePath, err)
-	}
-
-	if cols == 0 {
-		cols = 80
-	}
-	if rows == 0 {
-		rows = 24
-	}
-	setPTYWindowSize(ptmx, cols, rows)
-
-	return ptmx, tty, nil
-}
-
-func setPTYWindowSize(ptmx *os.File, cols, rows uint32) {
-	if ptmx == nil {
-		return
-	}
-	ws := &ptyWinsize{
-		Row: uint16(rows),
-		Col: uint16(cols),
-	}
-	_, _, _ = syscall.Syscall(syscall.SYS_IOCTL, ptmx.Fd(), syscall.TIOCSWINSZ, uintptr(unsafe.Pointer(ws)))
-}
-
 func resolveShellBinary() string {
 	for _, candidate := range []string{"/bin/bash", "/usr/bin/bash", "/bin/sh"} {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
@@ -109,7 +53,7 @@ func (m *terminalManager) startSession(ctx context.Context, req *pb.StartTermina
 	// Close any existing session with the same ID first.
 	m.closeSession(sessionID)
 
-	ptmx, tty, err := openLinuxPTY(req.GetCols(), req.GetRows())
+	ptmx, tty, err := openPTY(req.GetCols(), req.GetRows())
 	if err != nil {
 		log.Printf("⚠️  terminal: failed to allocate PTY for session %s: %v", sessionID, err)
 		sendTerminalClosed(out, sessionID, 1, fmt.Sprintf("failed to allocate PTY: %v", err))
@@ -142,11 +86,7 @@ func (m *terminalManager) startSession(ctx context.Context, req *pb.StartTermina
 	cmd.Stdin = tty
 	cmd.Stdout = tty
 	cmd.Stderr = tty
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid:  true,
-		Setctty: true,
-		Ctty:    0,
-	}
+	configureCmdPTY(cmd, tty)
 
 	if err := cmd.Start(); err != nil {
 		_ = tty.Close()
@@ -265,7 +205,7 @@ func (m *terminalManager) closeSession(sessionID string) {
 			_ = sess.ptmx.Close()
 		}
 		if sess.cmd != nil && sess.cmd.Process != nil {
-			_ = syscall.Kill(-sess.cmd.Process.Pid, syscall.SIGKILL)
+			killProcessGroup(sess.cmd.Process.Pid)
 			_ = sess.cmd.Process.Kill()
 		}
 	})
