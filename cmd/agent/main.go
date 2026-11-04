@@ -34,16 +34,16 @@ func main() {
 		os.Exit(0)
 	}
 
-	if err := paths.EnsureAutohostDirs(); err != nil {
-		log.Fatalf("creating autohost dirs: %v", err)
-	}
-
 	cfgPath := os.Args[1]
 
 	log.Printf("Loading configuration from: %s", cfgPath)
 	cfg, err := agent.Load(cfgPath)
 	if err != nil {
 		log.Fatalf("loading config: %v", err)
+	}
+
+	if err := paths.EnsureAutohostDirs(); err != nil {
+		log.Fatalf("creating autohost dirs: %v", err)
 	}
 
 	a := agent.New(cfg, Version)

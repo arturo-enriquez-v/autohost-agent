@@ -169,6 +169,61 @@ func (JobStatus) EnumDescriptor() ([]byte, []int) {
 	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{2}
 }
 
+type FileOpType int32
+
+const (
+	FileOpType_FILE_OP_LIST          FileOpType = 0 // List directory entries in shared folder
+	FileOpType_FILE_OP_MKDIR         FileOpType = 1 // Create a directory inside shared folder
+	FileOpType_FILE_OP_DELETE        FileOpType = 2 // Delete a file or directory inside shared folder
+	FileOpType_FILE_OP_PUSH_TO_URL   FileOpType = 3 // Agent uploads a local shared file via HTTP POST to transfer_url
+	FileOpType_FILE_OP_PULL_FROM_URL FileOpType = 4 // Agent downloads a file via HTTP GET from transfer_url into shared folder
+)
+
+// Enum value maps for FileOpType.
+var (
+	FileOpType_name = map[int32]string{
+		0: "FILE_OP_LIST",
+		1: "FILE_OP_MKDIR",
+		2: "FILE_OP_DELETE",
+		3: "FILE_OP_PUSH_TO_URL",
+		4: "FILE_OP_PULL_FROM_URL",
+	}
+	FileOpType_value = map[string]int32{
+		"FILE_OP_LIST":          0,
+		"FILE_OP_MKDIR":         1,
+		"FILE_OP_DELETE":        2,
+		"FILE_OP_PUSH_TO_URL":   3,
+		"FILE_OP_PULL_FROM_URL": 4,
+	}
+)
+
+func (x FileOpType) Enum() *FileOpType {
+	p := new(FileOpType)
+	*p = x
+	return p
+}
+
+func (x FileOpType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FileOpType) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_node_agent_v1_node_agent_proto_enumTypes[3].Descriptor()
+}
+
+func (FileOpType) Type() protoreflect.EnumType {
+	return &file_proto_node_agent_v1_node_agent_proto_enumTypes[3]
+}
+
+func (x FileOpType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FileOpType.Descriptor instead.
+func (FileOpType) EnumDescriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{3}
+}
+
 type RegisterCommandRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"` // validated against the auth token server-side
@@ -303,6 +358,9 @@ type NodeMessage struct {
 	//	*NodeMessage_LogDiagnostic
 	//	*NodeMessage_NetworkStats
 	//	*NodeMessage_HypervisorInfo
+	//	*NodeMessage_TerminalOutput
+	//	*NodeMessage_TerminalClosed
+	//	*NodeMessage_FileOpResponse
 	Payload       isNodeMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -435,6 +493,33 @@ func (x *NodeMessage) GetHypervisorInfo() *HypervisorInfoPayload {
 	return nil
 }
 
+func (x *NodeMessage) GetTerminalOutput() *TerminalOutputPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_TerminalOutput); ok {
+			return x.TerminalOutput
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetTerminalClosed() *TerminalClosedPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_TerminalClosed); ok {
+			return x.TerminalClosed
+		}
+	}
+	return nil
+}
+
+func (x *NodeMessage) GetFileOpResponse() *FileOperationResponsePayload {
+	if x != nil {
+		if x, ok := x.Payload.(*NodeMessage_FileOpResponse); ok {
+			return x.FileOpResponse
+		}
+	}
+	return nil
+}
+
 type isNodeMessage_Payload interface {
 	isNodeMessage_Payload()
 }
@@ -479,6 +564,18 @@ type NodeMessage_HypervisorInfo struct {
 	HypervisorInfo *HypervisorInfoPayload `protobuf:"bytes,10,opt,name=hypervisor_info,json=hypervisorInfo,proto3,oneof"`
 }
 
+type NodeMessage_TerminalOutput struct {
+	TerminalOutput *TerminalOutputPayload `protobuf:"bytes,11,opt,name=terminal_output,json=terminalOutput,proto3,oneof"`
+}
+
+type NodeMessage_TerminalClosed struct {
+	TerminalClosed *TerminalClosedPayload `protobuf:"bytes,12,opt,name=terminal_closed,json=terminalClosed,proto3,oneof"`
+}
+
+type NodeMessage_FileOpResponse struct {
+	FileOpResponse *FileOperationResponsePayload `protobuf:"bytes,13,opt,name=file_op_response,json=fileOpResponse,proto3,oneof"`
+}
+
 func (*NodeMessage_JobResult) isNodeMessage_Payload() {}
 
 func (*NodeMessage_Heartbeat) isNodeMessage_Payload() {}
@@ -498,6 +595,12 @@ func (*NodeMessage_LogDiagnostic) isNodeMessage_Payload() {}
 func (*NodeMessage_NetworkStats) isNodeMessage_Payload() {}
 
 func (*NodeMessage_HypervisorInfo) isNodeMessage_Payload() {}
+
+func (*NodeMessage_TerminalOutput) isNodeMessage_Payload() {}
+
+func (*NodeMessage_TerminalClosed) isNodeMessage_Payload() {}
+
+func (*NodeMessage_FileOpResponse) isNodeMessage_Payload() {}
 
 // Reports whether the node can host virtual machines (KVM + libvirt) and how
 // many resources it has available for them. Sent once per Connect session.
@@ -755,6 +858,11 @@ type ServerMessage struct {
 	//	*ServerMessage_StopContainers
 	//	*ServerMessage_CollectLogs
 	//	*ServerMessage_RequestNetworkStats
+	//	*ServerMessage_StartTerminal
+	//	*ServerMessage_TerminalInput
+	//	*ServerMessage_TerminalResize
+	//	*ServerMessage_CloseTerminal
+	//	*ServerMessage_FileOpRequest
 	Payload       isServerMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -887,6 +995,51 @@ func (x *ServerMessage) GetRequestNetworkStats() *RequestNetworkStatsPayload {
 	return nil
 }
 
+func (x *ServerMessage) GetStartTerminal() *StartTerminalPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_StartTerminal); ok {
+			return x.StartTerminal
+		}
+	}
+	return nil
+}
+
+func (x *ServerMessage) GetTerminalInput() *TerminalInputPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_TerminalInput); ok {
+			return x.TerminalInput
+		}
+	}
+	return nil
+}
+
+func (x *ServerMessage) GetTerminalResize() *TerminalResizePayload {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_TerminalResize); ok {
+			return x.TerminalResize
+		}
+	}
+	return nil
+}
+
+func (x *ServerMessage) GetCloseTerminal() *CloseTerminalPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_CloseTerminal); ok {
+			return x.CloseTerminal
+		}
+	}
+	return nil
+}
+
+func (x *ServerMessage) GetFileOpRequest() *FileOperationRequestPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*ServerMessage_FileOpRequest); ok {
+			return x.FileOpRequest
+		}
+	}
+	return nil
+}
+
 type isServerMessage_Payload interface {
 	isServerMessage_Payload()
 }
@@ -931,6 +1084,26 @@ type ServerMessage_RequestNetworkStats struct {
 	RequestNetworkStats *RequestNetworkStatsPayload `protobuf:"bytes,10,opt,name=request_network_stats,json=requestNetworkStats,proto3,oneof"`
 }
 
+type ServerMessage_StartTerminal struct {
+	StartTerminal *StartTerminalPayload `protobuf:"bytes,11,opt,name=start_terminal,json=startTerminal,proto3,oneof"`
+}
+
+type ServerMessage_TerminalInput struct {
+	TerminalInput *TerminalInputPayload `protobuf:"bytes,12,opt,name=terminal_input,json=terminalInput,proto3,oneof"`
+}
+
+type ServerMessage_TerminalResize struct {
+	TerminalResize *TerminalResizePayload `protobuf:"bytes,13,opt,name=terminal_resize,json=terminalResize,proto3,oneof"`
+}
+
+type ServerMessage_CloseTerminal struct {
+	CloseTerminal *CloseTerminalPayload `protobuf:"bytes,14,opt,name=close_terminal,json=closeTerminal,proto3,oneof"`
+}
+
+type ServerMessage_FileOpRequest struct {
+	FileOpRequest *FileOperationRequestPayload `protobuf:"bytes,15,opt,name=file_op_request,json=fileOpRequest,proto3,oneof"`
+}
+
 func (*ServerMessage_ExecuteJob) isServerMessage_Payload() {}
 
 func (*ServerMessage_StreamLogs) isServerMessage_Payload() {}
@@ -950,6 +1123,16 @@ func (*ServerMessage_StopContainers) isServerMessage_Payload() {}
 func (*ServerMessage_CollectLogs) isServerMessage_Payload() {}
 
 func (*ServerMessage_RequestNetworkStats) isServerMessage_Payload() {}
+
+func (*ServerMessage_StartTerminal) isServerMessage_Payload() {}
+
+func (*ServerMessage_TerminalInput) isServerMessage_Payload() {}
+
+func (*ServerMessage_TerminalResize) isServerMessage_Payload() {}
+
+func (*ServerMessage_CloseTerminal) isServerMessage_Payload() {}
+
+func (*ServerMessage_FileOpRequest) isServerMessage_Payload() {}
 
 type JobResultPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2374,6 +2557,584 @@ func (x *NetworkStatsPayload) GetError() string {
 	return ""
 }
 
+// Server asks agent to spawn an interactive PTY shell session.
+type StartTerminalPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"` // UUID identifying this terminal session
+	Cols          uint32                 `protobuf:"varint,2,opt,name=cols,proto3" json:"cols,omitempty"`                           // initial terminal columns (e.g. 80 or 120)
+	Rows          uint32                 `protobuf:"varint,3,opt,name=rows,proto3" json:"rows,omitempty"`                           // initial terminal rows (e.g. 24 or 40)
+	Shell         string                 `protobuf:"bytes,4,opt,name=shell,proto3" json:"shell,omitempty"`                          // optional preferred shell (e.g. "/bin/bash"), empty = auto-detect
+	Cwd           string                 `protobuf:"bytes,5,opt,name=cwd,proto3" json:"cwd,omitempty"`                              // optional initial working directory
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartTerminalPayload) Reset() {
+	*x = StartTerminalPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartTerminalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartTerminalPayload) ProtoMessage() {}
+
+func (x *StartTerminalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartTerminalPayload.ProtoReflect.Descriptor instead.
+func (*StartTerminalPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *StartTerminalPayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *StartTerminalPayload) GetCols() uint32 {
+	if x != nil {
+		return x.Cols
+	}
+	return 0
+}
+
+func (x *StartTerminalPayload) GetRows() uint32 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+func (x *StartTerminalPayload) GetShell() string {
+	if x != nil {
+		return x.Shell
+	}
+	return ""
+}
+
+func (x *StartTerminalPayload) GetCwd() string {
+	if x != nil {
+		return x.Cwd
+	}
+	return ""
+}
+
+// Server forwards raw stdin keystrokes from the browser to the agent PTY.
+type TerminalInputPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalInputPayload) Reset() {
+	*x = TerminalInputPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalInputPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalInputPayload) ProtoMessage() {}
+
+func (x *TerminalInputPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalInputPayload.ProtoReflect.Descriptor instead.
+func (*TerminalInputPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *TerminalInputPayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TerminalInputPayload) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// Server notifies agent that the browser terminal window resized.
+type TerminalResizePayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Cols          uint32                 `protobuf:"varint,2,opt,name=cols,proto3" json:"cols,omitempty"`
+	Rows          uint32                 `protobuf:"varint,3,opt,name=rows,proto3" json:"rows,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalResizePayload) Reset() {
+	*x = TerminalResizePayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalResizePayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalResizePayload) ProtoMessage() {}
+
+func (x *TerminalResizePayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalResizePayload.ProtoReflect.Descriptor instead.
+func (*TerminalResizePayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *TerminalResizePayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TerminalResizePayload) GetCols() uint32 {
+	if x != nil {
+		return x.Cols
+	}
+	return 0
+}
+
+func (x *TerminalResizePayload) GetRows() uint32 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+// Server asks agent to terminate the PTY session.
+type CloseTerminalPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloseTerminalPayload) Reset() {
+	*x = CloseTerminalPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloseTerminalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloseTerminalPayload) ProtoMessage() {}
+
+func (x *CloseTerminalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloseTerminalPayload.ProtoReflect.Descriptor instead.
+func (*CloseTerminalPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *CloseTerminalPayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+// Agent streams raw stdout/stderr bytes from the PTY back to the server.
+type TerminalOutputPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalOutputPayload) Reset() {
+	*x = TerminalOutputPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalOutputPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalOutputPayload) ProtoMessage() {}
+
+func (x *TerminalOutputPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalOutputPayload.ProtoReflect.Descriptor instead.
+func (*TerminalOutputPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *TerminalOutputPayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TerminalOutputPayload) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// Agent notifies server that the PTY process exited or failed to start.
+type TerminalClosedPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ExitCode      int32                  `protobuf:"varint,2,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalClosedPayload) Reset() {
+	*x = TerminalClosedPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalClosedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalClosedPayload) ProtoMessage() {}
+
+func (x *TerminalClosedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalClosedPayload.ProtoReflect.Descriptor instead.
+func (*TerminalClosedPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *TerminalClosedPayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TerminalClosedPayload) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *TerminalClosedPayload) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type FileOperationRequestPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // Correlation UUID
+	OpType        FileOpType             `protobuf:"varint,2,opt,name=op_type,json=opType,proto3,enum=node_agent.v1.FileOpType" json:"op_type,omitempty"`
+	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`                                  // Relative path inside node's shared directory
+	TransferUrl   string                 `protobuf:"bytes,4,opt,name=transfer_url,json=transferUrl,proto3" json:"transfer_url,omitempty"` // Used for PUSH_TO_URL and PULL_FROM_URL
+	AuthToken     string                 `protobuf:"bytes,5,opt,name=auth_token,json=authToken,proto3" json:"auth_token,omitempty"`       // One-time transfer token
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileOperationRequestPayload) Reset() {
+	*x = FileOperationRequestPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileOperationRequestPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileOperationRequestPayload) ProtoMessage() {}
+
+func (x *FileOperationRequestPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileOperationRequestPayload.ProtoReflect.Descriptor instead.
+func (*FileOperationRequestPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *FileOperationRequestPayload) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *FileOperationRequestPayload) GetOpType() FileOpType {
+	if x != nil {
+		return x.OpType
+	}
+	return FileOpType_FILE_OP_LIST
+}
+
+func (x *FileOperationRequestPayload) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *FileOperationRequestPayload) GetTransferUrl() string {
+	if x != nil {
+		return x.TransferUrl
+	}
+	return ""
+}
+
+func (x *FileOperationRequestPayload) GetAuthToken() string {
+	if x != nil {
+		return x.AuthToken
+	}
+	return ""
+}
+
+type FileEntryInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	IsDir         bool                   `protobuf:"varint,3,opt,name=is_dir,json=isDir,proto3" json:"is_dir,omitempty"`
+	SizeBytes     int64                  `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	ModifiedAt    int64                  `protobuf:"varint,5,opt,name=modified_at,json=modifiedAt,proto3" json:"modified_at,omitempty"` // Unix timestamp (seconds)
+	Mode          string                 `protobuf:"bytes,6,opt,name=mode,proto3" json:"mode,omitempty"`                                // e.g. "-rw-r--r--"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileEntryInfo) Reset() {
+	*x = FileEntryInfo{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileEntryInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileEntryInfo) ProtoMessage() {}
+
+func (x *FileEntryInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileEntryInfo.ProtoReflect.Descriptor instead.
+func (*FileEntryInfo) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *FileEntryInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *FileEntryInfo) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *FileEntryInfo) GetIsDir() bool {
+	if x != nil {
+		return x.IsDir
+	}
+	return false
+}
+
+func (x *FileEntryInfo) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+func (x *FileEntryInfo) GetModifiedAt() int64 {
+	if x != nil {
+		return x.ModifiedAt
+	}
+	return 0
+}
+
+func (x *FileEntryInfo) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+type FileOperationResponsePayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Success       bool                   `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`
+	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	Entries       []*FileEntryInfo       `protobuf:"bytes,4,rep,name=entries,proto3" json:"entries,omitempty"` // Populated for FILE_OP_LIST
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileOperationResponsePayload) Reset() {
+	*x = FileOperationResponsePayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileOperationResponsePayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileOperationResponsePayload) ProtoMessage() {}
+
+func (x *FileOperationResponsePayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileOperationResponsePayload.ProtoReflect.Descriptor instead.
+func (*FileOperationResponsePayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *FileOperationResponsePayload) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *FileOperationResponsePayload) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *FileOperationResponsePayload) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *FileOperationResponsePayload) GetEntries() []*FileEntryInfo {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
 var File_proto_node_agent_v1_node_agent_proto protoreflect.FileDescriptor
 
 const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
@@ -2389,7 +3150,7 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x18RegisterCommandsResponse\x12\x1e\n" +
 	"\n" +
 	"registered\x18\x01 \x01(\x05R\n" +
-	"registered\"\xe2\x05\n" +
+	"registered\"\xdd\a\n" +
 	"\vNodeMessage\x12@\n" +
 	"\n" +
 	"job_result\x18\x01 \x01(\v2\x1f.node_agent.v1.JobResultPayloadH\x00R\tjobResult\x12?\n" +
@@ -2402,7 +3163,10 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x0elog_diagnostic\x18\b \x01(\v2#.node_agent.v1.LogDiagnosticPayloadH\x00R\rlogDiagnostic\x12I\n" +
 	"\rnetwork_stats\x18\t \x01(\v2\".node_agent.v1.NetworkStatsPayloadH\x00R\fnetworkStats\x12O\n" +
 	"\x0fhypervisor_info\x18\n" +
-	" \x01(\v2$.node_agent.v1.HypervisorInfoPayloadH\x00R\x0ehypervisorInfoB\t\n" +
+	" \x01(\v2$.node_agent.v1.HypervisorInfoPayloadH\x00R\x0ehypervisorInfo\x12O\n" +
+	"\x0fterminal_output\x18\v \x01(\v2$.node_agent.v1.TerminalOutputPayloadH\x00R\x0eterminalOutput\x12O\n" +
+	"\x0fterminal_closed\x18\f \x01(\v2$.node_agent.v1.TerminalClosedPayloadH\x00R\x0eterminalClosed\x12W\n" +
+	"\x10file_op_response\x18\r \x01(\v2+.node_agent.v1.FileOperationResponsePayloadH\x00R\x0efileOpResponseB\t\n" +
 	"\apayload\"\x94\x03\n" +
 	"\x15HypervisorInfoPayload\x12\x18\n" +
 	"\acapable\x18\x01 \x01(\bR\acapable\x12#\n" +
@@ -2428,7 +3192,7 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x12disk_usage_percent\x18\t \x01(\x02R\x10diskUsagePercent\x12%\n" +
 	"\x0euptime_seconds\x18\n" +
 	" \x01(\x03R\ruptimeSeconds\x12(\n" +
-	"\x10cpu_temp_celsius\x18\v \x01(\x02R\x0ecpuTempCelsius\"\xbe\x06\n" +
+	"\x10cpu_temp_celsius\x18\v \x01(\x02R\x0ecpuTempCelsius\"\xcf\t\n" +
 	"\rServerMessage\x12C\n" +
 	"\vexecute_job\x18\x01 \x01(\v2 .node_agent.v1.ExecuteJobPayloadH\x00R\n" +
 	"executeJob\x12C\n" +
@@ -2442,7 +3206,12 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x0fstop_containers\x18\b \x01(\v2$.node_agent.v1.StopContainersPayloadH\x00R\x0estopContainers\x12F\n" +
 	"\fcollect_logs\x18\t \x01(\v2!.node_agent.v1.CollectLogsPayloadH\x00R\vcollectLogs\x12_\n" +
 	"\x15request_network_stats\x18\n" +
-	" \x01(\v2).node_agent.v1.RequestNetworkStatsPayloadH\x00R\x13requestNetworkStatsB\t\n" +
+	" \x01(\v2).node_agent.v1.RequestNetworkStatsPayloadH\x00R\x13requestNetworkStats\x12L\n" +
+	"\x0estart_terminal\x18\v \x01(\v2#.node_agent.v1.StartTerminalPayloadH\x00R\rstartTerminal\x12L\n" +
+	"\x0eterminal_input\x18\f \x01(\v2#.node_agent.v1.TerminalInputPayloadH\x00R\rterminalInput\x12O\n" +
+	"\x0fterminal_resize\x18\r \x01(\v2$.node_agent.v1.TerminalResizePayloadH\x00R\x0eterminalResize\x12L\n" +
+	"\x0eclose_terminal\x18\x0e \x01(\v2#.node_agent.v1.CloseTerminalPayloadH\x00R\rcloseTerminal\x12T\n" +
+	"\x0ffile_op_request\x18\x0f \x01(\v2*.node_agent.v1.FileOperationRequestPayloadH\x00R\rfileOpRequestB\t\n" +
 	"\apayload\"\x89\x01\n" +
 	"\x10JobResultPayload\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x120\n" +
@@ -2559,7 +3328,58 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1d\n" +
 	"\n" +
 	"stats_json\x18\x02 \x01(\tR\tstatsJson\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error*v\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\x85\x01\n" +
+	"\x14StartTerminalPayload\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04cols\x18\x02 \x01(\rR\x04cols\x12\x12\n" +
+	"\x04rows\x18\x03 \x01(\rR\x04rows\x12\x14\n" +
+	"\x05shell\x18\x04 \x01(\tR\x05shell\x12\x10\n" +
+	"\x03cwd\x18\x05 \x01(\tR\x03cwd\"I\n" +
+	"\x14TerminalInputPayload\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"^\n" +
+	"\x15TerminalResizePayload\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04cols\x18\x02 \x01(\rR\x04cols\x12\x12\n" +
+	"\x04rows\x18\x03 \x01(\rR\x04rows\"5\n" +
+	"\x14CloseTerminalPayload\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"J\n" +
+	"\x15TerminalOutputPayload\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"i\n" +
+	"\x15TerminalClosedPayload\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\texit_code\x18\x02 \x01(\x05R\bexitCode\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\xc6\x01\n" +
+	"\x1bFileOperationRequestPayload\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x122\n" +
+	"\aop_type\x18\x02 \x01(\x0e2\x19.node_agent.v1.FileOpTypeR\x06opType\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12!\n" +
+	"\ftransfer_url\x18\x04 \x01(\tR\vtransferUrl\x12\x1d\n" +
+	"\n" +
+	"auth_token\x18\x05 \x01(\tR\tauthToken\"\xa2\x01\n" +
+	"\rFileEntryInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12\x15\n" +
+	"\x06is_dir\x18\x03 \x01(\bR\x05isDir\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\x12\x1f\n" +
+	"\vmodified_at\x18\x05 \x01(\x03R\n" +
+	"modifiedAt\x12\x12\n" +
+	"\x04mode\x18\x06 \x01(\tR\x04mode\"\xa5\x01\n" +
+	"\x1cFileOperationResponsePayload\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
+	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\x126\n" +
+	"\aentries\x18\x04 \x03(\v2\x1c.node_agent.v1.FileEntryInfoR\aentries*v\n" +
 	"\vCommandType\x12\x18\n" +
 	"\x14COMMAND_TYPE_DEFAULT\x10\x00\x12\x17\n" +
 	"\x13COMMAND_TYPE_CUSTOM\x10\x01\x12\x1c\n" +
@@ -2571,7 +3391,14 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\tJobStatus\x12\x16\n" +
 	"\x12JOB_STATUS_RUNNING\x10\x00\x12\x18\n" +
 	"\x14JOB_STATUS_COMPLETED\x10\x01\x12\x15\n" +
-	"\x11JOB_STATUS_FAILED\x10\x022\x8f\x02\n" +
+	"\x11JOB_STATUS_FAILED\x10\x02*y\n" +
+	"\n" +
+	"FileOpType\x12\x10\n" +
+	"\fFILE_OP_LIST\x10\x00\x12\x11\n" +
+	"\rFILE_OP_MKDIR\x10\x01\x12\x12\n" +
+	"\x0eFILE_OP_DELETE\x10\x02\x12\x17\n" +
+	"\x13FILE_OP_PUSH_TO_URL\x10\x03\x12\x19\n" +
+	"\x15FILE_OP_PULL_FROM_URL\x10\x042\x8f\x02\n" +
 	"\x10NodeAgentService\x12d\n" +
 	"\x10RegisterCommands\x12%.node_agent.v1.RegisterCommandRequest\x1a'.node_agent.v1.RegisterCommandsResponse(\x01\x12G\n" +
 	"\aConnect\x12\x1a.node_agent.v1.NodeMessage\x1a\x1c.node_agent.v1.ServerMessage(\x010\x01\x12L\n" +
@@ -2589,80 +3416,100 @@ func file_proto_node_agent_v1_node_agent_proto_rawDescGZIP() []byte {
 	return file_proto_node_agent_v1_node_agent_proto_rawDescData
 }
 
-var file_proto_node_agent_v1_node_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_proto_node_agent_v1_node_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_proto_node_agent_v1_node_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_proto_node_agent_v1_node_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_proto_node_agent_v1_node_agent_proto_goTypes = []any{
-	(CommandType)(0),                    // 0: node_agent.v1.CommandType
-	(ProfileType)(0),                    // 1: node_agent.v1.ProfileType
-	(JobStatus)(0),                      // 2: node_agent.v1.JobStatus
-	(*RegisterCommandRequest)(nil),      // 3: node_agent.v1.RegisterCommandRequest
-	(*RegisterCommandsResponse)(nil),    // 4: node_agent.v1.RegisterCommandsResponse
-	(*NodeMessage)(nil),                 // 5: node_agent.v1.NodeMessage
-	(*HypervisorInfoPayload)(nil),       // 6: node_agent.v1.HypervisorInfoPayload
-	(*MetricPayload)(nil),               // 7: node_agent.v1.MetricPayload
-	(*ServerMessage)(nil),               // 8: node_agent.v1.ServerMessage
-	(*JobResultPayload)(nil),            // 9: node_agent.v1.JobResultPayload
-	(*HeartbeatPayload)(nil),            // 10: node_agent.v1.HeartbeatPayload
-	(*ExecuteJobPayload)(nil),           // 11: node_agent.v1.ExecuteJobPayload
-	(*StreamLogsPayload)(nil),           // 12: node_agent.v1.StreamLogsPayload
-	(*StopLogsPayload)(nil),             // 13: node_agent.v1.StopLogsPayload
-	(*LogEntryPayload)(nil),             // 14: node_agent.v1.LogEntryPayload
-	(*ConfigureHealthCheckPayload)(nil), // 15: node_agent.v1.ConfigureHealthCheckPayload
-	(*StopHealthCheckPayload)(nil),      // 16: node_agent.v1.StopHealthCheckPayload
-	(*HealthCheckResultPayload)(nil),    // 17: node_agent.v1.HealthCheckResultPayload
-	(*RequestProfilePayload)(nil),       // 18: node_agent.v1.RequestProfilePayload
-	(*ProfileDataPayload)(nil),          // 19: node_agent.v1.ProfileDataPayload
-	(*StreamContainersPayload)(nil),     // 20: node_agent.v1.StreamContainersPayload
-	(*StopContainersPayload)(nil),       // 21: node_agent.v1.StopContainersPayload
-	(*ContainerInfo)(nil),               // 22: node_agent.v1.ContainerInfo
-	(*ContainerListPayload)(nil),        // 23: node_agent.v1.ContainerListPayload
-	(*MetricRequest)(nil),               // 24: node_agent.v1.MetricRequest
-	(*MetricResponse)(nil),              // 25: node_agent.v1.MetricResponse
-	(*CollectLogsPayload)(nil),          // 26: node_agent.v1.CollectLogsPayload
-	(*LogDiagnosticPayload)(nil),        // 27: node_agent.v1.LogDiagnosticPayload
-	(*LogSourceBundle)(nil),             // 28: node_agent.v1.LogSourceBundle
-	(*RequestNetworkStatsPayload)(nil),  // 29: node_agent.v1.RequestNetworkStatsPayload
-	(*NetworkStatsPayload)(nil),         // 30: node_agent.v1.NetworkStatsPayload
+	(CommandType)(0),                     // 0: node_agent.v1.CommandType
+	(ProfileType)(0),                     // 1: node_agent.v1.ProfileType
+	(JobStatus)(0),                       // 2: node_agent.v1.JobStatus
+	(FileOpType)(0),                      // 3: node_agent.v1.FileOpType
+	(*RegisterCommandRequest)(nil),       // 4: node_agent.v1.RegisterCommandRequest
+	(*RegisterCommandsResponse)(nil),     // 5: node_agent.v1.RegisterCommandsResponse
+	(*NodeMessage)(nil),                  // 6: node_agent.v1.NodeMessage
+	(*HypervisorInfoPayload)(nil),        // 7: node_agent.v1.HypervisorInfoPayload
+	(*MetricPayload)(nil),                // 8: node_agent.v1.MetricPayload
+	(*ServerMessage)(nil),                // 9: node_agent.v1.ServerMessage
+	(*JobResultPayload)(nil),             // 10: node_agent.v1.JobResultPayload
+	(*HeartbeatPayload)(nil),             // 11: node_agent.v1.HeartbeatPayload
+	(*ExecuteJobPayload)(nil),            // 12: node_agent.v1.ExecuteJobPayload
+	(*StreamLogsPayload)(nil),            // 13: node_agent.v1.StreamLogsPayload
+	(*StopLogsPayload)(nil),              // 14: node_agent.v1.StopLogsPayload
+	(*LogEntryPayload)(nil),              // 15: node_agent.v1.LogEntryPayload
+	(*ConfigureHealthCheckPayload)(nil),  // 16: node_agent.v1.ConfigureHealthCheckPayload
+	(*StopHealthCheckPayload)(nil),       // 17: node_agent.v1.StopHealthCheckPayload
+	(*HealthCheckResultPayload)(nil),     // 18: node_agent.v1.HealthCheckResultPayload
+	(*RequestProfilePayload)(nil),        // 19: node_agent.v1.RequestProfilePayload
+	(*ProfileDataPayload)(nil),           // 20: node_agent.v1.ProfileDataPayload
+	(*StreamContainersPayload)(nil),      // 21: node_agent.v1.StreamContainersPayload
+	(*StopContainersPayload)(nil),        // 22: node_agent.v1.StopContainersPayload
+	(*ContainerInfo)(nil),                // 23: node_agent.v1.ContainerInfo
+	(*ContainerListPayload)(nil),         // 24: node_agent.v1.ContainerListPayload
+	(*MetricRequest)(nil),                // 25: node_agent.v1.MetricRequest
+	(*MetricResponse)(nil),               // 26: node_agent.v1.MetricResponse
+	(*CollectLogsPayload)(nil),           // 27: node_agent.v1.CollectLogsPayload
+	(*LogDiagnosticPayload)(nil),         // 28: node_agent.v1.LogDiagnosticPayload
+	(*LogSourceBundle)(nil),              // 29: node_agent.v1.LogSourceBundle
+	(*RequestNetworkStatsPayload)(nil),   // 30: node_agent.v1.RequestNetworkStatsPayload
+	(*NetworkStatsPayload)(nil),          // 31: node_agent.v1.NetworkStatsPayload
+	(*StartTerminalPayload)(nil),         // 32: node_agent.v1.StartTerminalPayload
+	(*TerminalInputPayload)(nil),         // 33: node_agent.v1.TerminalInputPayload
+	(*TerminalResizePayload)(nil),        // 34: node_agent.v1.TerminalResizePayload
+	(*CloseTerminalPayload)(nil),         // 35: node_agent.v1.CloseTerminalPayload
+	(*TerminalOutputPayload)(nil),        // 36: node_agent.v1.TerminalOutputPayload
+	(*TerminalClosedPayload)(nil),        // 37: node_agent.v1.TerminalClosedPayload
+	(*FileOperationRequestPayload)(nil),  // 38: node_agent.v1.FileOperationRequestPayload
+	(*FileEntryInfo)(nil),                // 39: node_agent.v1.FileEntryInfo
+	(*FileOperationResponsePayload)(nil), // 40: node_agent.v1.FileOperationResponsePayload
 }
 var file_proto_node_agent_v1_node_agent_proto_depIdxs = []int32{
 	0,  // 0: node_agent.v1.RegisterCommandRequest.type:type_name -> node_agent.v1.CommandType
-	9,  // 1: node_agent.v1.NodeMessage.job_result:type_name -> node_agent.v1.JobResultPayload
-	10, // 2: node_agent.v1.NodeMessage.heartbeat:type_name -> node_agent.v1.HeartbeatPayload
-	14, // 3: node_agent.v1.NodeMessage.log_entry:type_name -> node_agent.v1.LogEntryPayload
-	7,  // 4: node_agent.v1.NodeMessage.metric:type_name -> node_agent.v1.MetricPayload
-	17, // 5: node_agent.v1.NodeMessage.health_result:type_name -> node_agent.v1.HealthCheckResultPayload
-	19, // 6: node_agent.v1.NodeMessage.profile_data:type_name -> node_agent.v1.ProfileDataPayload
-	23, // 7: node_agent.v1.NodeMessage.container_list:type_name -> node_agent.v1.ContainerListPayload
-	27, // 8: node_agent.v1.NodeMessage.log_diagnostic:type_name -> node_agent.v1.LogDiagnosticPayload
-	30, // 9: node_agent.v1.NodeMessage.network_stats:type_name -> node_agent.v1.NetworkStatsPayload
-	6,  // 10: node_agent.v1.NodeMessage.hypervisor_info:type_name -> node_agent.v1.HypervisorInfoPayload
-	11, // 11: node_agent.v1.ServerMessage.execute_job:type_name -> node_agent.v1.ExecuteJobPayload
-	12, // 12: node_agent.v1.ServerMessage.stream_logs:type_name -> node_agent.v1.StreamLogsPayload
-	13, // 13: node_agent.v1.ServerMessage.stop_logs:type_name -> node_agent.v1.StopLogsPayload
-	15, // 14: node_agent.v1.ServerMessage.configure_health_check:type_name -> node_agent.v1.ConfigureHealthCheckPayload
-	16, // 15: node_agent.v1.ServerMessage.stop_health_check:type_name -> node_agent.v1.StopHealthCheckPayload
-	18, // 16: node_agent.v1.ServerMessage.request_profile:type_name -> node_agent.v1.RequestProfilePayload
-	20, // 17: node_agent.v1.ServerMessage.stream_containers:type_name -> node_agent.v1.StreamContainersPayload
-	21, // 18: node_agent.v1.ServerMessage.stop_containers:type_name -> node_agent.v1.StopContainersPayload
-	26, // 19: node_agent.v1.ServerMessage.collect_logs:type_name -> node_agent.v1.CollectLogsPayload
-	29, // 20: node_agent.v1.ServerMessage.request_network_stats:type_name -> node_agent.v1.RequestNetworkStatsPayload
-	2,  // 21: node_agent.v1.JobResultPayload.status:type_name -> node_agent.v1.JobStatus
-	0,  // 22: node_agent.v1.ExecuteJobPayload.command_type:type_name -> node_agent.v1.CommandType
-	1,  // 23: node_agent.v1.RequestProfilePayload.profile_type:type_name -> node_agent.v1.ProfileType
-	1,  // 24: node_agent.v1.ProfileDataPayload.profile_type:type_name -> node_agent.v1.ProfileType
-	22, // 25: node_agent.v1.ContainerListPayload.containers:type_name -> node_agent.v1.ContainerInfo
-	28, // 26: node_agent.v1.LogDiagnosticPayload.sources:type_name -> node_agent.v1.LogSourceBundle
-	3,  // 27: node_agent.v1.NodeAgentService.RegisterCommands:input_type -> node_agent.v1.RegisterCommandRequest
-	5,  // 28: node_agent.v1.NodeAgentService.Connect:input_type -> node_agent.v1.NodeMessage
-	24, // 29: node_agent.v1.NodeAgentService.ReportMetrics:input_type -> node_agent.v1.MetricRequest
-	4,  // 30: node_agent.v1.NodeAgentService.RegisterCommands:output_type -> node_agent.v1.RegisterCommandsResponse
-	8,  // 31: node_agent.v1.NodeAgentService.Connect:output_type -> node_agent.v1.ServerMessage
-	25, // 32: node_agent.v1.NodeAgentService.ReportMetrics:output_type -> node_agent.v1.MetricResponse
-	30, // [30:33] is the sub-list for method output_type
-	27, // [27:30] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	10, // 1: node_agent.v1.NodeMessage.job_result:type_name -> node_agent.v1.JobResultPayload
+	11, // 2: node_agent.v1.NodeMessage.heartbeat:type_name -> node_agent.v1.HeartbeatPayload
+	15, // 3: node_agent.v1.NodeMessage.log_entry:type_name -> node_agent.v1.LogEntryPayload
+	8,  // 4: node_agent.v1.NodeMessage.metric:type_name -> node_agent.v1.MetricPayload
+	18, // 5: node_agent.v1.NodeMessage.health_result:type_name -> node_agent.v1.HealthCheckResultPayload
+	20, // 6: node_agent.v1.NodeMessage.profile_data:type_name -> node_agent.v1.ProfileDataPayload
+	24, // 7: node_agent.v1.NodeMessage.container_list:type_name -> node_agent.v1.ContainerListPayload
+	28, // 8: node_agent.v1.NodeMessage.log_diagnostic:type_name -> node_agent.v1.LogDiagnosticPayload
+	31, // 9: node_agent.v1.NodeMessage.network_stats:type_name -> node_agent.v1.NetworkStatsPayload
+	7,  // 10: node_agent.v1.NodeMessage.hypervisor_info:type_name -> node_agent.v1.HypervisorInfoPayload
+	36, // 11: node_agent.v1.NodeMessage.terminal_output:type_name -> node_agent.v1.TerminalOutputPayload
+	37, // 12: node_agent.v1.NodeMessage.terminal_closed:type_name -> node_agent.v1.TerminalClosedPayload
+	40, // 13: node_agent.v1.NodeMessage.file_op_response:type_name -> node_agent.v1.FileOperationResponsePayload
+	12, // 14: node_agent.v1.ServerMessage.execute_job:type_name -> node_agent.v1.ExecuteJobPayload
+	13, // 15: node_agent.v1.ServerMessage.stream_logs:type_name -> node_agent.v1.StreamLogsPayload
+	14, // 16: node_agent.v1.ServerMessage.stop_logs:type_name -> node_agent.v1.StopLogsPayload
+	16, // 17: node_agent.v1.ServerMessage.configure_health_check:type_name -> node_agent.v1.ConfigureHealthCheckPayload
+	17, // 18: node_agent.v1.ServerMessage.stop_health_check:type_name -> node_agent.v1.StopHealthCheckPayload
+	19, // 19: node_agent.v1.ServerMessage.request_profile:type_name -> node_agent.v1.RequestProfilePayload
+	21, // 20: node_agent.v1.ServerMessage.stream_containers:type_name -> node_agent.v1.StreamContainersPayload
+	22, // 21: node_agent.v1.ServerMessage.stop_containers:type_name -> node_agent.v1.StopContainersPayload
+	27, // 22: node_agent.v1.ServerMessage.collect_logs:type_name -> node_agent.v1.CollectLogsPayload
+	30, // 23: node_agent.v1.ServerMessage.request_network_stats:type_name -> node_agent.v1.RequestNetworkStatsPayload
+	32, // 24: node_agent.v1.ServerMessage.start_terminal:type_name -> node_agent.v1.StartTerminalPayload
+	33, // 25: node_agent.v1.ServerMessage.terminal_input:type_name -> node_agent.v1.TerminalInputPayload
+	34, // 26: node_agent.v1.ServerMessage.terminal_resize:type_name -> node_agent.v1.TerminalResizePayload
+	35, // 27: node_agent.v1.ServerMessage.close_terminal:type_name -> node_agent.v1.CloseTerminalPayload
+	38, // 28: node_agent.v1.ServerMessage.file_op_request:type_name -> node_agent.v1.FileOperationRequestPayload
+	2,  // 29: node_agent.v1.JobResultPayload.status:type_name -> node_agent.v1.JobStatus
+	0,  // 30: node_agent.v1.ExecuteJobPayload.command_type:type_name -> node_agent.v1.CommandType
+	1,  // 31: node_agent.v1.RequestProfilePayload.profile_type:type_name -> node_agent.v1.ProfileType
+	1,  // 32: node_agent.v1.ProfileDataPayload.profile_type:type_name -> node_agent.v1.ProfileType
+	23, // 33: node_agent.v1.ContainerListPayload.containers:type_name -> node_agent.v1.ContainerInfo
+	29, // 34: node_agent.v1.LogDiagnosticPayload.sources:type_name -> node_agent.v1.LogSourceBundle
+	3,  // 35: node_agent.v1.FileOperationRequestPayload.op_type:type_name -> node_agent.v1.FileOpType
+	39, // 36: node_agent.v1.FileOperationResponsePayload.entries:type_name -> node_agent.v1.FileEntryInfo
+	4,  // 37: node_agent.v1.NodeAgentService.RegisterCommands:input_type -> node_agent.v1.RegisterCommandRequest
+	6,  // 38: node_agent.v1.NodeAgentService.Connect:input_type -> node_agent.v1.NodeMessage
+	25, // 39: node_agent.v1.NodeAgentService.ReportMetrics:input_type -> node_agent.v1.MetricRequest
+	5,  // 40: node_agent.v1.NodeAgentService.RegisterCommands:output_type -> node_agent.v1.RegisterCommandsResponse
+	9,  // 41: node_agent.v1.NodeAgentService.Connect:output_type -> node_agent.v1.ServerMessage
+	26, // 42: node_agent.v1.NodeAgentService.ReportMetrics:output_type -> node_agent.v1.MetricResponse
+	40, // [40:43] is the sub-list for method output_type
+	37, // [37:40] is the sub-list for method input_type
+	37, // [37:37] is the sub-list for extension type_name
+	37, // [37:37] is the sub-list for extension extendee
+	0,  // [0:37] is the sub-list for field type_name
 }
 
 func init() { file_proto_node_agent_v1_node_agent_proto_init() }
@@ -2681,6 +3528,9 @@ func file_proto_node_agent_v1_node_agent_proto_init() {
 		(*NodeMessage_LogDiagnostic)(nil),
 		(*NodeMessage_NetworkStats)(nil),
 		(*NodeMessage_HypervisorInfo)(nil),
+		(*NodeMessage_TerminalOutput)(nil),
+		(*NodeMessage_TerminalClosed)(nil),
+		(*NodeMessage_FileOpResponse)(nil),
 	}
 	file_proto_node_agent_v1_node_agent_proto_msgTypes[5].OneofWrappers = []any{
 		(*ServerMessage_ExecuteJob)(nil),
@@ -2693,14 +3543,19 @@ func file_proto_node_agent_v1_node_agent_proto_init() {
 		(*ServerMessage_StopContainers)(nil),
 		(*ServerMessage_CollectLogs)(nil),
 		(*ServerMessage_RequestNetworkStats)(nil),
+		(*ServerMessage_StartTerminal)(nil),
+		(*ServerMessage_TerminalInput)(nil),
+		(*ServerMessage_TerminalResize)(nil),
+		(*ServerMessage_CloseTerminal)(nil),
+		(*ServerMessage_FileOpRequest)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_node_agent_v1_node_agent_proto_rawDesc), len(file_proto_node_agent_v1_node_agent_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   28,
+			NumEnums:      4,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

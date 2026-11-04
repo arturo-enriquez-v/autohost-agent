@@ -24,11 +24,12 @@ StandardError=journal
 # Security hardening
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
+ProtectSystem=full
+ProtectHome=false
 
 # Allow persistent state storage
 StateDirectory=autohost
+ReadWritePaths=-/var/lib/autohost -/media -/mnt -/srv -/opt/autohost
 
 # Optional but recommended
 ProtectKernelTunables=true

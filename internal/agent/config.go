@@ -10,13 +10,15 @@ import (
 )
 
 type Config struct {
-	APIURL       string   `yaml:"api_url"`
-	WSURL        string   `yaml:"ws_url"`
-	GRPCAddress  string   `yaml:"grpc_address"`
-	AgentToken   string   `yaml:"agent_token"`
-	RefreshToken string   `yaml:"refresh_token"`
-	NodeID       string   `yaml:"node_id"`
-	Tags         []string `yaml:"tags"`
+	APIURL         string   `yaml:"api_url"`
+	WSURL          string   `yaml:"ws_url"`
+	GRPCAddress    string   `yaml:"grpc_address"`
+	AgentToken     string   `yaml:"agent_token"`
+	RefreshToken   string   `yaml:"refresh_token"`
+	NodeID         string   `yaml:"node_id"`
+	Tags           []string `yaml:"tags"`
+	StorageDir     string   `yaml:"storage_dir"`
+	SharedDir      string   `yaml:"shared_dir"`
 	GRPCInsecure   bool     `yaml:"grpc_insecure"`
 	GRPCCACert     string   `yaml:"grpc_ca_cert"`
 	GRPCClientCert string   `yaml:"grpc_client_cert"`
@@ -32,6 +34,12 @@ func Load(path string) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(bs, &cfg); err != nil {
 		return nil, err
+	}
+	if cfg.StorageDir != "" && os.Getenv("AUTOHOST_STORAGE_DIR") == "" {
+		_ = os.Setenv("AUTOHOST_STORAGE_DIR", cfg.StorageDir)
+	}
+	if cfg.SharedDir != "" && os.Getenv("AUTOHOST_SHARED_DIR") == "" {
+		_ = os.Setenv("AUTOHOST_SHARED_DIR", cfg.SharedDir)
 	}
 	return &cfg, nil
 }

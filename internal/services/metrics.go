@@ -34,7 +34,7 @@ func (s *MetricsService) Collect() (*domain.Metrics, error) {
 	m.MemoryAvailableBytes = memInfo.AvailableBytes
 	m.MemoryUsagePercent = memInfo.UsagePercent
 
-	storagePath := paths.GetAutohostDir()
+	storagePath := sysinfo.ResolveStorageDiskPath(paths.GetAutohostDir())
 	diskInfo, err := sysinfo.GetDiskInfo(storagePath)
 	if err != nil {
 		diskInfo, err = sysinfo.GetDiskInfo("/")

@@ -67,6 +67,7 @@ type GRPCClient struct {
 	containerCancel context.CancelFunc // non-nil while container streaming is active
 
 	healthMon *healthMonitor
+	termMgr   *terminalManager
 }
 
 func NewGRPCClient(address, token, nodeID string, tags []string, tlsConfig GRPCTLSConfig, registry *dispatcher.Registry, metricsService *services.MetricsService) *GRPCClient {
@@ -81,6 +82,7 @@ func NewGRPCClient(address, token, nodeID string, tags []string, tlsConfig GRPCT
 		heartbeatInterval: 30 * time.Second,
 		metricsInterval:   5 * time.Second,
 		healthMon:         newHealthMonitor(),
+		termMgr:           newTerminalManager(),
 	}
 }
 
@@ -295,10 +297,13 @@ func (c *GRPCClient) connectStream(ctx context.Context, client pb.NodeAgentServi
 		streamCancel()
 		c.healthMon.stopAll()
 		c.stopContainerStream()
+		if c.termMgr != nil {
+			c.termMgr.stopAll()
+		}
 	}()
 
 	// Buffered channel so goroutines don't block on slow sends.
-	results := make(chan *pb.NodeMessage, 32)
+	results := make(chan *pb.NodeMessage, 128)
 
 	// Sender: forwards all NodeMessages to the server.
 	sendDone := make(chan struct{})
@@ -373,6 +378,24 @@ func (c *GRPCClient) connectStream(ctx context.Context, client pb.NodeAgentServi
 			c.healthMon.remove(p.StopHealthCheck.GetMonitorId())
 		case *pb.ServerMessage_RequestNetworkStats:
 			go c.handleRequestNetworkStats(streamCtx, p.RequestNetworkStats, results)
+		case *pb.ServerMessage_StartTerminal:
+			if c.termMgr != nil {
+				go c.termMgr.startSession(streamCtx, p.StartTerminal, results)
+			}
+		case *pb.ServerMessage_TerminalInput:
+			if c.termMgr != nil {
+				c.termMgr.writeInput(p.TerminalInput)
+			}
+		case *pb.ServerMessage_TerminalResize:
+			if c.termMgr != nil {
+				c.termMgr.resizeSession(p.TerminalResize)
+			}
+		case *pb.ServerMessage_CloseTerminal:
+			if c.termMgr != nil && p.CloseTerminal != nil {
+				c.termMgr.closeSession(p.CloseTerminal.GetSessionId())
+			}
+		case *pb.ServerMessage_FileOpRequest:
+			go c.handleFileOpRequest(streamCtx, p.FileOpRequest, results)
 		default:
 			log.Printf("gRPC: unknown ServerMessage payload type %T", p)
 		}

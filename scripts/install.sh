@@ -223,8 +223,78 @@ collect_config() {
 }
 
 # ──────────────────────────────────────────────
-# Creación de usuario del sistema
+# Creación de usuario del sistema y almacenamiento
 # ──────────────────────────────────────────────
+STORAGE_DIR="/var/lib/autohost"
+
+detect_storage() {
+  if [ -n "${AUTOHOST_STORAGE_DIR:-}" ]; then
+    STORAGE_DIR="$AUTOHOST_STORAGE_DIR"
+    log_info "Usando directorio de almacenamiento configurado: ${STORAGE_DIR}"
+    return
+  fi
+
+  local root_avail_kb
+  root_avail_kb=$(df -Pk / | awk 'NR==2 {print $4}')
+  local best_mount=""
+  local best_avail_kb=0
+
+  while read -r dev fstype mountpoint avail_kb; do
+    case "$mountpoint" in
+      /|/boot|/boot/*|/snap/*|/run/*|/sys/*|/proc/*|/dev/*|/var/lib/docker/*)
+        continue
+        ;;
+    esac
+    case "$fstype" in
+      ext4|xfs|btrfs|zfs|f2fs)
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    if [ "${avail_kb:-0}" -gt 33554432 ] && [ "${avail_kb:-0}" -gt "$((root_avail_kb * 2))" ] && [ "${avail_kb:-0}" -gt "$best_avail_kb" ]; then
+      best_avail_kb="$avail_kb"
+      best_mount="$mountpoint"
+    fi
+  done < <(df -PTk 2>/dev/null | awk 'NR>1 && $1 ~ /^\/dev\// && $1 !~ /^\/dev\/(loop|zram)/ {print $1, $2, $7, $5}')
+
+  if [ -n "$best_mount" ]; then
+    STORAGE_DIR="${best_mount%/}/autohost"
+    local best_gb=$((best_avail_kb / 1024 / 1024))
+    log_ok "Disco secundario de alta capacidad detectado en ${best_mount} (${best_gb} GB libres) -> Usando ${STORAGE_DIR}"
+  else
+    STORAGE_DIR="/var/lib/autohost"
+  fi
+}
+
+setup_storage_dirs() {
+  detect_storage
+
+  $SUDO mkdir -p "${STORAGE_DIR}/config" \
+                 "${STORAGE_DIR}/templates" \
+                 "${STORAGE_DIR}/apps" \
+                 "${STORAGE_DIR}/logs" \
+                 "${STORAGE_DIR}/state" \
+                 "${STORAGE_DIR}/backups" \
+                 "${STORAGE_DIR}/shared"
+
+  if [ "$STORAGE_DIR" != "/var/lib/autohost" ]; then
+    if [ -d "/var/lib/autohost" ] && [ ! -L "/var/lib/autohost" ]; then
+      log_info "Migrando datos previos de /var/lib/autohost hacia ${STORAGE_DIR}..."
+      $SUDO cp -a /var/lib/autohost/. "${STORAGE_DIR}/" 2>/dev/null || true
+      $SUDO rm -rf /var/lib/autohost
+    fi
+    if [ ! -e "/var/lib/autohost" ]; then
+      $SUDO ln -s "$STORAGE_DIR" /var/lib/autohost
+      log_ok "Symlink creado: /var/lib/autohost -> ${STORAGE_DIR}"
+    fi
+  fi
+
+  $SUDO chown -R "${AGENT_USER}:${AGENT_USER}" "${STORAGE_DIR}" 2>/dev/null || true
+  $SUDO chmod 775 "${STORAGE_DIR}/shared" 2>/dev/null || true
+  log_ok "Carpeta compartida del nodo lista en ${STORAGE_DIR}/shared"
+}
+
 create_system_user() {
   if id -u "$AGENT_USER" >/dev/null 2>&1; then
     log_info "Usuario del sistema '${AGENT_USER}' ya existe."
@@ -233,7 +303,7 @@ create_system_user() {
     $SUDO useradd \
       --system \
       --no-create-home \
-      --shell /usr/sbin/nologin \
+      --shell /bin/bash \
       --comment "Autohost Agent" \
       "$AGENT_USER"
     log_ok "Usuario '${AGENT_USER}' creado."
@@ -244,6 +314,8 @@ create_system_user() {
     $SUDO usermod -aG docker "$AGENT_USER"
     log_ok "Usuario '${AGENT_USER}' añadido al grupo docker."
   fi
+
+  setup_storage_dirs
 }
 
 # ──────────────────────────────────────────────
@@ -272,6 +344,8 @@ ws_url:       "${WS_URL}"
 grpc_address: "${GRPC_ADDRESS}"
 agent_token:  "${AUTOHOST_TOKEN}"
 node_id:      "${AUTOHOST_NODE_ID}"
+storage_dir:  "${STORAGE_DIR}"
+shared_dir:   "${STORAGE_DIR}/shared"
 tags:
 $(printf '%b' "${tags_yaml:-  []\n}")
 EOF
@@ -297,16 +371,19 @@ Type=simple
 User=${AGENT_USER}
 Group=${AGENT_USER}
 ExecStart=${BIN_DIR}/${BIN_NAME} ${CONFIG_FILE}
-Environment=DOCKER_CONFIG=/var/lib/autohost/.docker
+Environment=DOCKER_CONFIG=${STORAGE_DIR}/.docker
+Environment=AUTOHOST_STORAGE_DIR=${STORAGE_DIR}
+Environment=AUTOHOST_SHARED_DIR=${STORAGE_DIR}/shared
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
+ProtectSystem=full
+ProtectHome=false
 StateDirectory=autohost
+ReadWritePaths=-/var/lib/autohost -/media -/mnt -/srv -/opt/autohost
 
 [Install]
 WantedBy=multi-user.target
