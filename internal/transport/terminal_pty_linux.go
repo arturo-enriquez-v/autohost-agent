@@ -71,7 +71,7 @@ func configureCmdPTY(cmd *exec.Cmd, tty *os.File) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid:  true,
 		Setctty: true,
-		Ctty:    int(tty.Fd()),
+		Ctty:    0,
 	}
 }
 
