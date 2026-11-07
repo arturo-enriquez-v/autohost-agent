@@ -209,7 +209,7 @@ func pushSharedFileToURL(ctx context.Context, filePath, transferURL, transferTok
 	}
 	defer f.Close()
 
-	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	reqCtx, cancel := context.WithTimeout(ctx, 60*time.Minute)
 	defer cancel()
 
 	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, transferURL, f)
@@ -222,7 +222,7 @@ func pushSharedFileToURL(ctx context.Context, filePath, transferURL, transferTok
 		httpReq.Header.Set("X-Transfer-Token", transferToken)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Minute}
+	client := &http.Client{Timeout: 60 * time.Minute}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("transfer upload failed: %w", err)
@@ -249,7 +249,7 @@ func pullSharedFileFromURL(ctx context.Context, sharedRoot, destPath, transferUR
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	reqCtx, cancel := context.WithTimeout(ctx, 60*time.Minute)
 	defer cancel()
 
 	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodGet, transferURL, nil)
@@ -260,7 +260,7 @@ func pullSharedFileFromURL(ctx context.Context, sharedRoot, destPath, transferUR
 		httpReq.Header.Set("X-Transfer-Token", transferToken)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Minute}
+	client := &http.Client{Timeout: 60 * time.Minute}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("transfer download failed: %w", err)
