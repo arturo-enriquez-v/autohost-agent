@@ -9,9 +9,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -209,6 +211,18 @@ func pushSharedFileToURL(ctx context.Context, filePath, transferURL, transferTok
 	}
 	defer f.Close()
 
+	var startOffset int64
+	if parsedURL, err := url.Parse(transferURL); err == nil {
+		if offsetStr := parsedURL.Query().Get("offset"); offsetStr != "" {
+			if s, err := strconv.ParseInt(offsetStr, 10, 64); err == nil && s > 0 && s < info.Size() {
+				startOffset = s
+				if _, err := f.Seek(startOffset, io.SeekStart); err != nil {
+					return fmt.Errorf("failed to seek: %w", err)
+				}
+			}
+		}
+	}
+
 	reqCtx, cancel := context.WithTimeout(ctx, 60*time.Minute)
 	defer cancel()
 
@@ -216,8 +230,14 @@ func pushSharedFileToURL(ctx context.Context, filePath, transferURL, transferTok
 	if err != nil {
 		return fmt.Errorf("failed to create transfer request: %w", err)
 	}
-	httpReq.ContentLength = info.Size()
+	contentLen := info.Size() - startOffset
+	if contentLen < 0 {
+		contentLen = 0
+	}
+	httpReq.ContentLength = contentLen
 	httpReq.Header.Set("Content-Type", "application/octet-stream")
+	httpReq.Header.Set("X-File-Size", strconv.FormatInt(info.Size(), 10))
+	httpReq.Header.Set("X-Start-Offset", strconv.FormatInt(startOffset, 10))
 	if transferToken != "" {
 		httpReq.Header.Set("X-Transfer-Token", transferToken)
 	}
