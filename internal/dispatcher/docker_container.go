@@ -162,12 +162,25 @@ func containerListRaw(ctx context.Context) ([]containerInfo, error) {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
 
+		var pubPorts []string
+		seenPorts := make(map[uint16]bool)
+		for _, p := range c.Ports {
+			if p.PublicPort > 0 && !seenPorts[p.PublicPort] {
+				seenPorts[p.PublicPort] = true
+				pubPorts = append(pubPorts, fmt.Sprintf("%d:%d/%s", p.PublicPort, p.PrivatePort, p.Type))
+			}
+		}
+		statusStr := c.Status
+		if len(pubPorts) > 0 {
+			statusStr = fmt.Sprintf("%s [%s]", c.Status, strings.Join(pubPorts, ", "))
+		}
+
 		result[i] = containerInfo{
 			ID:     id,
 			Name:   name,
 			Image:  c.Image,
 			State:  c.State,
-			Status: c.Status,
+			Status: statusStr,
 		}
 
 		// Collect live stats for running containers
