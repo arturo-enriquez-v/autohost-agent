@@ -136,6 +136,7 @@ func execVMCommand(ctx context.Context, jobType string, payload map[string]any) 
 
 	switch action {
 	case "start":
+		ensureDefaultNetwork(ctx)
 		return runVirsh(ctx, "start", name)
 	case "stop":
 		return runVirsh(ctx, "shutdown", name)
@@ -146,6 +147,14 @@ func execVMCommand(ctx context.Context, jobType string, payload map[string]any) 
 	default:
 		return ExecuteResult{Err: fmt.Errorf("unsupported vm action %q", action)}
 	}
+}
+
+func ensureDefaultNetwork(ctx context.Context) {
+	if _, err := exec.LookPath("virsh"); err != nil {
+		return
+	}
+	_ = exec.CommandContext(ctx, "virsh", "-c", "qemu:///system", "net-start", "default").Run()
+	_ = exec.CommandContext(ctx, "virsh", "-c", "qemu:///system", "net-autostart", "default").Run()
 }
 
 func runVirsh(ctx context.Context, args ...string) ExecuteResult {
@@ -261,6 +270,7 @@ func createVM(ctx context.Context, payload map[string]any) ExecuteResult {
 	}
 
 	// 6. Start VM
+	ensureDefaultNetwork(ctx)
 	startCmd := exec.CommandContext(ctx, "virsh", "-c", "qemu:///system", "start", cfg.Name)
 	if out, err := startCmd.CombinedOutput(); err != nil {
 		return ExecuteResult{Err: fmt.Errorf("virsh start error: %w: %s", err, string(out))}
@@ -350,17 +360,10 @@ func getVMStorageDir() string {
 		return defaultDir
 	}
 
-	// 3. Fallback to user home directory if writable
-	if home, err := os.UserHomeDir(); err == nil {
-		homeDir := filepath.Join(home, ".autohost", "vms")
-		if err := os.MkdirAll(homeDir, 0755); err == nil && checkDirWritable(homeDir) == nil {
-			return homeDir
-		}
-	}
-
-	// 4. Temporary fallback
+	// 3. Shared /tmp fallback (traversable by libvirt-qemu uid 64055, unlike /home/* which is 0700/0750)
 	tmpDir := "/tmp/autohost-vms"
 	_ = os.MkdirAll(tmpDir, 0755)
+	_ = os.Chmod(tmpDir, 0755)
 	return tmpDir
 }
 
@@ -481,6 +484,8 @@ func generateCloudInitISO(ctx context.Context, cfg *vmConfig) error {
 		apiURL := getFallbackAPIURL(cfg.CloudAPIURL)
 		if apiURL != "" {
 			sb.WriteString("runcmd:\n")
+			sb.WriteString("  - [ sh, -c, \"curl -fsSL https://get.docker.com | sh || true\" ]\n")
+			sb.WriteString(fmt.Sprintf("  - [ usermod, -aG, docker, %s ]\n", cfg.User))
 			sb.WriteString("  - [ sh, -c, \"curl -fsSL https://raw.githubusercontent.com/mazapanuwu13/autohost-cli/main/scripts/install.sh | bash || true\" ]\n")
 			sb.WriteString("  - [ sh, -c, \"curl -fsSL https://raw.githubusercontent.com/mazapanuwu13/autohost-agent/main/scripts/install.sh | bash || true\" ]\n")
 			sb.WriteString(fmt.Sprintf("  - [ autohost, enroll, link, --api, %s, --token, %s ]\n", apiURL, cfg.EnrollToken))
