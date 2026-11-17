@@ -177,6 +177,7 @@ const (
 	FileOpType_FILE_OP_DELETE        FileOpType = 2 // Delete a file or directory inside shared folder
 	FileOpType_FILE_OP_PUSH_TO_URL   FileOpType = 3 // Agent uploads a local shared file via HTTP POST to transfer_url
 	FileOpType_FILE_OP_PULL_FROM_URL FileOpType = 4 // Agent downloads a file via HTTP GET from transfer_url into shared folder
+	FileOpType_FILE_OP_RENAME        FileOpType = 5 // Rename or move a file/directory inside shared folder
 )
 
 // Enum value maps for FileOpType.
@@ -187,6 +188,7 @@ var (
 		2: "FILE_OP_DELETE",
 		3: "FILE_OP_PUSH_TO_URL",
 		4: "FILE_OP_PULL_FROM_URL",
+		5: "FILE_OP_RENAME",
 	}
 	FileOpType_value = map[string]int32{
 		"FILE_OP_LIST":          0,
@@ -194,6 +196,7 @@ var (
 		"FILE_OP_DELETE":        2,
 		"FILE_OP_PUSH_TO_URL":   3,
 		"FILE_OP_PULL_FROM_URL": 4,
+		"FILE_OP_RENAME":        5,
 	}
 )
 
@@ -2914,6 +2917,7 @@ type FileOperationRequestPayload struct {
 	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`                                  // Relative path inside node's shared directory
 	TransferUrl   string                 `protobuf:"bytes,4,opt,name=transfer_url,json=transferUrl,proto3" json:"transfer_url,omitempty"` // Used for PUSH_TO_URL and PULL_FROM_URL
 	AuthToken     string                 `protobuf:"bytes,5,opt,name=auth_token,json=authToken,proto3" json:"auth_token,omitempty"`       // One-time transfer token
+	DestPath      string                 `protobuf:"bytes,6,opt,name=dest_path,json=destPath,proto3" json:"dest_path,omitempty"`          // Destination relative path for FILE_OP_RENAME
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2979,6 +2983,13 @@ func (x *FileOperationRequestPayload) GetTransferUrl() string {
 func (x *FileOperationRequestPayload) GetAuthToken() string {
 	if x != nil {
 		return x.AuthToken
+	}
+	return ""
+}
+
+func (x *FileOperationRequestPayload) GetDestPath() string {
+	if x != nil {
+		return x.DestPath
 	}
 	return ""
 }
@@ -3356,7 +3367,7 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
 	"\texit_code\x18\x02 \x01(\x05R\bexitCode\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\xc6\x01\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\xe3\x01\n" +
 	"\x1bFileOperationRequestPayload\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x122\n" +
@@ -3364,7 +3375,8 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x04path\x18\x03 \x01(\tR\x04path\x12!\n" +
 	"\ftransfer_url\x18\x04 \x01(\tR\vtransferUrl\x12\x1d\n" +
 	"\n" +
-	"auth_token\x18\x05 \x01(\tR\tauthToken\"\xa2\x01\n" +
+	"auth_token\x18\x05 \x01(\tR\tauthToken\x12\x1b\n" +
+	"\tdest_path\x18\x06 \x01(\tR\bdestPath\"\xa2\x01\n" +
 	"\rFileEntryInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x15\n" +
@@ -3391,14 +3403,15 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\tJobStatus\x12\x16\n" +
 	"\x12JOB_STATUS_RUNNING\x10\x00\x12\x18\n" +
 	"\x14JOB_STATUS_COMPLETED\x10\x01\x12\x15\n" +
-	"\x11JOB_STATUS_FAILED\x10\x02*y\n" +
+	"\x11JOB_STATUS_FAILED\x10\x02*\x8d\x01\n" +
 	"\n" +
 	"FileOpType\x12\x10\n" +
 	"\fFILE_OP_LIST\x10\x00\x12\x11\n" +
 	"\rFILE_OP_MKDIR\x10\x01\x12\x12\n" +
 	"\x0eFILE_OP_DELETE\x10\x02\x12\x17\n" +
 	"\x13FILE_OP_PUSH_TO_URL\x10\x03\x12\x19\n" +
-	"\x15FILE_OP_PULL_FROM_URL\x10\x042\x8f\x02\n" +
+	"\x15FILE_OP_PULL_FROM_URL\x10\x04\x12\x12\n" +
+	"\x0eFILE_OP_RENAME\x10\x052\x8f\x02\n" +
 	"\x10NodeAgentService\x12d\n" +
 	"\x10RegisterCommands\x12%.node_agent.v1.RegisterCommandRequest\x1a'.node_agent.v1.RegisterCommandsResponse(\x01\x12G\n" +
 	"\aConnect\x12\x1a.node_agent.v1.NodeMessage\x1a\x1c.node_agent.v1.ServerMessage(\x010\x01\x12L\n" +

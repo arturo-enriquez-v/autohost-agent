@@ -32,6 +32,7 @@ var safeContainerName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_\-.]{0,127}$`
 //	container.start.<name>          → container start
 //	container.stop.<name>           → container stop
 //	container.restart.<name>        → container restart
+//	container.remove.<name>         → container remove (force)
 //	container.stats.<name>          → container stats (JSON)
 //	container.logs.<name>           → container logs (last 100 lines)
 func execContainerCommand(ctx context.Context, jobType string) ExecuteResult {
@@ -46,7 +47,7 @@ func execContainerCommand(ctx context.Context, jobType string) ExecuteResult {
 	case "list":
 		return containerList(ctx)
 
-	case "start", "stop", "restart":
+	case "start", "stop", "restart", "remove":
 		if len(parts) < 3 || parts[2] == "" {
 			return ExecuteResult{Err: fmt.Errorf("container %s: missing container name", action)}
 		}
@@ -255,6 +256,11 @@ func containerAction(ctx context.Context, action, name string) ExecuteResult {
 		if err := cli.ContainerRestart(ctx, name, container.StopOptions{Timeout: &stopTimeout}); err != nil {
 			return ExecuteResult{Err: fmt.Errorf("docker restart %s: %w", name, err)}
 		}
+	case "remove":
+		if err := cli.ContainerRemove(ctx, name, container.RemoveOptions{Force: true}); err != nil {
+			return ExecuteResult{Err: fmt.Errorf("docker remove %s: %w", name, err)}
+		}
+		return ExecuteResult{Output: fmt.Sprintf("container %s removed", name)}
 	default:
 		return ExecuteResult{Err: fmt.Errorf("unsupported action %q", action)}
 	}

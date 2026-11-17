@@ -142,6 +142,48 @@ func executeLocalFileOp(ctx context.Context, req *pb.FileOperationRequestPayload
 			Success:   true,
 		}
 
+	case pb.FileOpType_FILE_OP_RENAME:
+		if fullPath == sharedRoot {
+			return &pb.FileOperationResponsePayload{
+				RequestId: reqID,
+				Success:   false,
+				Error:     "cannot rename root shared directory",
+			}
+		}
+		destFullPath, destErr := paths.SafeSharedPath(req.GetDestPath())
+		if destErr != nil {
+			return &pb.FileOperationResponsePayload{
+				RequestId: reqID,
+				Success:   false,
+				Error:     destErr.Error(),
+			}
+		}
+		if destFullPath == sharedRoot {
+			return &pb.FileOperationResponsePayload{
+				RequestId: reqID,
+				Success:   false,
+				Error:     "invalid destination path",
+			}
+		}
+		if _, statErr := os.Stat(destFullPath); statErr == nil {
+			return &pb.FileOperationResponsePayload{
+				RequestId: reqID,
+				Success:   false,
+				Error:     "destination already exists",
+			}
+		}
+		if err := os.Rename(fullPath, destFullPath); err != nil {
+			return &pb.FileOperationResponsePayload{
+				RequestId: reqID,
+				Success:   false,
+				Error:     fmt.Sprintf("rename failed: %v", err),
+			}
+		}
+		return &pb.FileOperationResponsePayload{
+			RequestId: reqID,
+			Success:   true,
+		}
+
 	default:
 		return &pb.FileOperationResponsePayload{
 			RequestId: reqID,
