@@ -23,6 +23,7 @@ import (
 type DockerPgBackup struct{}
 
 type PgBackupPayload struct {
+	NodeID             string   `json:"node_id"`
 	ContainerName      string   `json:"container_name"`
 	PgUser             string   `json:"pg_user"`
 	Database           string   `json:"database"` // empty = pg_dumpall
@@ -150,10 +151,11 @@ func (c *DockerPgBackup) ExecuteWithOutput(ctx context.Context, payload map[stri
 		return "", fmt.Errorf("pg_dump produced a suspiciously small output (%d bytes), possible error in dump", fileSizeBytes)
 	}
 
-	nowStr := time.Now().Format("20060102_150405")
-	filename := fmt.Sprintf("%s_%s.sql.gz", nowStr, req.ContainerName)
+	nowStr := time.Now().Format("2006-01-02_150405")
+	filename := fmt.Sprintf("%s.back", nowStr)
 
 	return saveAndStoreBackup(ctx, StorageOptions{
+		NodeID:             req.NodeID,
 		ContainerName:      req.ContainerName,
 		BackupRecordID:     req.BackupRecordID,
 		StorageDestination: req.StorageDestination,

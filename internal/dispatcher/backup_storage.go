@@ -75,10 +75,10 @@ func saveAndStoreBackup(ctx context.Context, opts StorageOptions, startTime time
 		return string(resBytes), nil
 	}
 
-	// 2. Local storage mode (on this node)
+	// 2. Local storage mode (inside shared/backup/<container_name>/<filename>)
 	baseDir := strings.TrimSpace(os.Getenv("BACKUP_STORAGE_DIR"))
 	if baseDir == "" {
-		baseDir = paths.GetSubdir("backups")
+		baseDir = filepath.Join(paths.GetSharedDir(), "backup")
 	}
 	localDir := filepath.Join(baseDir, opts.ContainerName)
 	if err := os.MkdirAll(localDir, 0755); err != nil {
@@ -99,18 +99,22 @@ func saveAndStoreBackup(ctx context.Context, opts StorageOptions, startTime time
 	result.LocalPath = localPath
 
 	// Cleanup old local backups based on retention count
-	if opts.RetentionCount > 0 {
+	if opts.RetentionCount > 0 && dest != "remote_node" {
 		cleanupOldBackups(localDir, opts.RetentionCount)
 	}
 
-	// 3. Replicate to parent API node if requested
-	if dest == "local_and_parent" || dest == "replicate_parent" {
+	// 3. Replicate to parent API node (which also forwards to replica_node_id if set)
+	if dest == "local_and_parent" || dest == "replicate_parent" || dest == "local_and_replica" || dest == "remote_node" {
 		parentPath, err := replicateToParent(ctx, opts, localPath)
 		if err != nil {
 			log.Printf("⚠️  warn: replication to parent API failed: %v (local backup preserved at %s)", err, localPath)
 		} else {
 			result.ParentPath = parentPath
 			log.Printf("✅ Backup successfully replicated to parent API: %s", parentPath)
+			if dest == "remote_node" {
+				_ = os.Remove(localPath)
+				result.LocalPath = ""
+			}
 		}
 	}
 

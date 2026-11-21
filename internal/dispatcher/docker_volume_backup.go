@@ -34,6 +34,7 @@ type S3Config struct {
 }
 
 type BackupPayload struct {
+	NodeID             string   `json:"node_id"`
 	ContainerName      string   `json:"container_name"`
 	Volumes            []string `json:"volumes"`
 	PauseContainer     bool     `json:"pause_container"`
@@ -125,10 +126,11 @@ func (c *DockerVolumeBackup) ExecuteWithOutput(ctx context.Context, payload map[
 	}
 	_ = tmpFile.Close()
 
-	nowStr := time.Now().Format("20060102_150405")
-	filename := fmt.Sprintf("%s_%s.tar.gz", nowStr, req.ContainerName)
+	nowStr := time.Now().Format("2006-01-02_150405")
+	filename := fmt.Sprintf("%s.back", nowStr)
 
 	return saveAndStoreBackup(ctx, StorageOptions{
+		NodeID:             req.NodeID,
 		ContainerName:      req.ContainerName,
 		BackupRecordID:     req.BackupRecordID,
 		StorageDestination: req.StorageDestination,

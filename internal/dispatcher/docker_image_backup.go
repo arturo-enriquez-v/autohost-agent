@@ -21,6 +21,7 @@ import (
 type DockerImageBackup struct{}
 
 type ImageBackupPayload struct {
+	NodeID             string   `json:"node_id"`
 	ContainerName      string   `json:"container_name"`
 	BackupRecordID     string   `json:"backup_record_id"`
 	StorageDestination string   `json:"storage_destination"`
@@ -107,10 +108,11 @@ func (c *DockerImageBackup) ExecuteWithOutput(ctx context.Context, payload map[s
 		return "", fmt.Errorf("docker save failed: %w", runErr)
 	}
 
-	nowStr := time.Now().Format("20060102_150405")
-	filename := fmt.Sprintf("%s_%s.image.tar.gz", nowStr, req.ContainerName)
+	nowStr := time.Now().Format("2006-01-02_150405")
+	filename := fmt.Sprintf("%s.back", nowStr)
 
 	return saveAndStoreBackup(ctx, StorageOptions{
+		NodeID:             req.NodeID,
 		ContainerName:      req.ContainerName,
 		BackupRecordID:     req.BackupRecordID,
 		StorageDestination: req.StorageDestination,

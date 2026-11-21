@@ -231,7 +231,7 @@ logs-incus:
 	incus exec $(NAME) -- sudo journalctl -u autohost-agent -f
 
 shell-incus: shell-server
-
+	1
 # ─── Enrollment Helpers ─────────────────────────────────────────────────────
 
 enroll-server: deploy-incus
