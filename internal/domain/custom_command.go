@@ -24,11 +24,3 @@ func (s ScriptName) Validate() error {
 	}
 	return nil
 }
-
-// CustomCommand represents a registered custom command script.
-type CustomCommand struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	ScriptPath  string `json:"script_path"`
-	NodeID      string `json:"node_id"`
-}
