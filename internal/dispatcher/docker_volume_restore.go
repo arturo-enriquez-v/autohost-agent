@@ -66,13 +66,9 @@ func (c *DockerVolumeRestore) ExecuteWithOutput(ctx context.Context, payload map
 	if !safeContainerName.MatchString(req.ContainerName) {
 		return "", fmt.Errorf("invalid container name: %q", req.ContainerName)
 	}
-	vols := req.Volumes
-	if len(vols) == 0 {
-		detected, err := inspectContainerVolumes(ctx, req.ContainerName)
-		if err != nil {
-			return "", fmt.Errorf("failed to inspect container volumes: %w", err)
-		}
-		vols = detected
+	vols, err := resolveBackupVolumes(ctx, req.ContainerName, req.Volumes)
+	if err != nil {
+		return "", err
 	}
 	if len(vols) == 0 {
 		return "", fmt.Errorf("no target volumes specified or detected for %q", req.ContainerName)

@@ -70,6 +70,14 @@ func (c *DockerPgRestore) ExecuteWithOutput(ctx context.Context, payload map[str
 			pgUser = "postgres"
 		}
 	}
+	if err := validatePgIdentifier("user", pgUser); err != nil {
+		return "", err
+	}
+	if req.Database != "" {
+		if err := validatePgIdentifier("database", req.Database); err != nil {
+			return "", err
+		}
+	}
 
 	// Download or copy the SQL dump
 	tmpFile, err := os.CreateTemp("", "autohost-pgrestore-*.sql.gz")
@@ -192,7 +200,9 @@ func preCleanDatabases(ctx context.Context, dumpFilePath string, reqDatabase str
 			db = m[3]
 		}
 		db = strings.TrimSpace(db)
-		if db != "" && db != "postgres" && db != "template1" && db != "template0" && !seen[db] {
+		// Database names come from the dump content: skip anything that is not a plain identifier
+		// so a crafted dump cannot inject SQL into the terminate/drop statements below.
+		if db != "" && db != "postgres" && db != "template1" && db != "template0" && !seen[db] && safePgIdentifier.MatchString(db) {
 			seen[db] = true
 			dbsToDrop = append(dbsToDrop, db)
 		}

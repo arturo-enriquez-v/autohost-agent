@@ -80,6 +80,14 @@ func (c *DockerPgBackup) ExecuteWithOutput(ctx context.Context, payload map[stri
 			pgUser = "postgres"
 		}
 	}
+	if err := validatePgIdentifier("user", pgUser); err != nil {
+		return "", err
+	}
+	if req.Database != "" {
+		if err := validatePgIdentifier("database", req.Database); err != nil {
+			return "", err
+		}
+	}
 
 	// Create temp file for the compressed SQL dump
 	tmpFile, err := os.CreateTemp("", "autohost-pgbackup-*.sql.gz")
@@ -90,14 +98,14 @@ func (c *DockerPgBackup) ExecuteWithOutput(ctx context.Context, payload map[stri
 	defer os.Remove(dumpFilePath)
 	defer tmpFile.Close()
 
-	// Build the docker exec command args:
+	// Build the docker exec command args (argv only, never through a shell):
 	// For a specific database: pg_dump --clean --if-exists -U <user> <database>
 	// For all databases:       pg_dumpall --clean --if-exists -U <user>
-	var dumpCmd string
+	var dumpCmd []string
 	if req.Database != "" {
-		dumpCmd = fmt.Sprintf("pg_dump --clean --if-exists -U %s %s", pgUser, req.Database)
+		dumpCmd = []string{"pg_dump", "--clean", "--if-exists", "-U", pgUser, req.Database}
 	} else {
-		dumpCmd = fmt.Sprintf("pg_dumpall --clean --if-exists -U %s", pgUser)
+		dumpCmd = []string{"pg_dumpall", "--clean", "--if-exists", "-U", pgUser}
 	}
 
 	var envArgs []string
@@ -107,7 +115,8 @@ func (c *DockerPgBackup) ExecuteWithOutput(ctx context.Context, payload map[stri
 
 	dockerArgs := []string{"exec"}
 	dockerArgs = append(dockerArgs, envArgs...)
-	dockerArgs = append(dockerArgs, req.ContainerName, "sh", "-c", dumpCmd)
+	dockerArgs = append(dockerArgs, req.ContainerName)
+	dockerArgs = append(dockerArgs, dumpCmd...)
 
 	gw := gzip.NewWriter(tmpFile)
 	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
