@@ -12,5 +12,6 @@ const (
 	EndpointCustomCommands = "/v1/custom-commands"
 	EndpointRefreshToken   = "/v1/auth/refresh"
 	EndpointNetworkStats   = "/v1/agent/network-stats"
+	EndpointRenewCert      = "/v1/enrollments/renew-cert"
 )
 

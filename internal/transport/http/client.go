@@ -154,3 +154,44 @@ func (c *Client) GetTokens() (accessToken, refreshToken string) {
 func (c *Client) ReportVersion(ctx context.Context, version string) error {
 	return c.post(ctx, EndpointVersionReport, map[string]string{"version": version})
 }
+
+// RenewedCertificate is the API response to a client certificate renewal.
+type RenewedCertificate struct {
+	ClientCertPEM string `json:"client_cert"`
+	CACertPEM     string `json:"ca_cert"`
+	ExpiresAt     string `json:"expires_at"`
+}
+
+// RenewClientCert sends a CSR to the API and returns the newly signed mTLS client certificate.
+// It authenticates with the node token (no refresh retry: node tokens do not use refresh).
+func (c *Client) RenewClientCert(ctx context.Context, csrPEM string) (*RenewedCertificate, error) {
+	bs, err := json.Marshal(map[string]string{"csr_pem": csrPEM})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+EndpointRenewCert, bytes.NewReader(bs))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	c.mu.RLock()
+	token := c.token
+	c.mu.RUnlock()
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, &ErrStatus{Code: resp.StatusCode}
+	}
+	var out RenewedCertificate
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

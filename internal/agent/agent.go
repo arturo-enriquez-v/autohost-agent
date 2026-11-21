@@ -104,6 +104,10 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 	}
 
+	if a.certRenewalEnabled() {
+		go a.certRenewalLoop(ctx)
+	}
+
 	if a.cfg.GRPCAddress == "" {
 		log.Println("ℹ️  gRPC address not configured — agent is idle")
 		<-ctx.Done()
