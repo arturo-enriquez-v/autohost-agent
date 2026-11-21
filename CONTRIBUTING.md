@@ -42,9 +42,8 @@ Before submitting large changes or new features, please open an Issue to discuss
 2. Make your changes adhering to existing code conventions.
 3. Verify that tests pass and the project builds cleanly:
    ```bash
-   make dev
-   # or
-   go test ./...
+   make build
+   make test
    ```
 
 ### 3. Submitting a Pull Request

@@ -1,318 +1,91 @@
 SHELL := /bin/bash
-.PHONY: build clean install uninstall run test release deploy-vm vm-start vm-stop vm-status vm-logs vm-shell setup-incus create-incus deploy-incus update-incus start-incus stop-incus status-incus logs-incus shell-incus create-server delete-server list-servers shell-server enroll-server link-server restart-incus
+.DEFAULT_GOAL := help
 
-BINARY_NAME  = autohost-agent
-INSTALL_PATH = /usr/local/bin
-CONFIG_PATH  = /etc/autohost
-SERVICE_PATH = /etc/systemd/system
+BINARY    := autohost-agent
+MAIN      := cmd/agent/main.go
+PLATFORMS := linux/amd64 linux/arm64
+VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS   := -s -w -X main.Version=$(VERSION)
+LAB       := scripts/lab.sh
 
-# Target instance name (defaults to autohost-test, customizable via INSTANCE=... or NAME=...)
-INSTANCE ?= autohost-test
-NAME     ?= $(INSTANCE)
-RAM      ?= 512MiB
-CPU      ?= 1
+.PHONY: help build build-all test clean release \
+	lab-setup lab-create lab-delete lab-list lab-shell lab-deploy lab-update \
+	lab-start lab-stop lab-restart lab-status lab-logs lab-enroll lab-link \
+	node-update node-setup node-hypervisor node-status node-logs node-shell
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS  = -s -w -X main.Version=$(VERSION)
-PLATFORMS = linux/amd64 linux/arm64
+help: ## Show this help
+	@awk 'BEGIN{FS=":.*## "} /^##@/{printf "\n\033[1m%s\033[0m\n", substr($$0,5)} \
+		/^[a-zA-Z0-9_%-]+:.*## /{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo -e "\nLab settings: copy lab.env.example to lab.env (NAME=, TOKEN= etc. also work on the command line)."
 
-build:
-	@echo "🔨 Building $(BINARY_NAME) $(VERSION)..."
-	go build -ldflags "$(LDFLAGS)" -o $(BINARY_NAME) cmd/agent/main.go
-	@echo "✅ Build complete: ./$(BINARY_NAME)"
+##@ Build
 
-build-multiarch:
+build: ## Build ./autohost-agent for this machine
+	go build -ldflags "$(LDFLAGS)" -o $(BINARY) $(MAIN)
+
+build-all: ## Cross-compile linux/amd64 and linux/arm64 into dist/
 	@mkdir -p dist
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY_NAME)-linux-amd64 cmd/agent/main.go
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY_NAME)-linux-arm64 cmd/agent/main.go
-	@echo "✅ Multi-arch binaries built in dist/ (linux/amd64, linux/arm64)"
-
-release:
-	@CURRENT=$$(git describe --tags --always --dirty 2>/dev/null || echo "dev"); \
-	echo "📌 Versión actual: $$CURRENT"; \
-	printf "🔖 Nueva versión (ej. v1.2.3): "; \
-	read NEW_VERSION; \
-	if [ -z "$$NEW_VERSION" ]; then echo "❌ La versión no puede estar vacía"; exit 1; fi; \
-	echo "🏷️  Creando tag $$NEW_VERSION..."; \
-	git tag -a "$$NEW_VERSION" -m "Release $$NEW_VERSION"; \
-	echo "🚀 Compilando release $$NEW_VERSION para: $(PLATFORMS)"; \
-	mkdir -p dist; \
-	for platform in $(PLATFORMS); do \
-		GOOS=$${platform%/*}; GOARCH=$${platform#*/}; \
-		out="dist/$(BINARY_NAME)-$${GOOS}-$${GOARCH}"; \
+	@for p in $(PLATFORMS); do os=$${p%/*}; arch=$${p#*/}; out=dist/$(BINARY)-$$os-$$arch; \
 		echo "  → $$out"; \
-		GOOS=$$GOOS GOARCH=$$GOARCH go build -ldflags "-s -w -X main.Version=$$NEW_VERSION" -o "$$out" cmd/agent/main.go; \
-	done; \
-	echo "🔐 Generando checksums..."; \
-	cd dist && sha256sum $(BINARY_NAME)-* > "checksums_$${NEW_VERSION}.txt"; \
-	echo "✅ Artefactos en dist/"; \
-	ls -lh dist/; \
-	echo ""; \
-	git push origin "$$NEW_VERSION"; \
-	echo "🎉 Release $$NEW_VERSION creada y subida a GitHub"
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o $$out $(MAIN) || exit 1; \
+	done
 
-# ─── Incus Infrastructure ───────────────────────────────────────────────────
+test: ## Run the tests
+	go test ./...
 
-setup-incus:
-	@echo "📦 Instalando Incus..."
-	@if command -v incus >/dev/null 2>&1; then \
-		echo "✅ Incus ya está instalado: $$(incus --version)"; \
-	else \
-		sudo apt-get update -qq && sudo apt-get install -y incus; \
-	fi
-	@echo "⚙️  Inicializando Incus..."
-	@if ! incus info >/dev/null 2>&1; then \
-		echo "{}" | sudo incus admin init --preseed; \
-	else \
-		echo "✅ Incus ya está inicializado"; \
-	fi
-	@echo "👤 Añadiendo usuario $$(whoami) al grupo incus..."
-	@if ! id -nG $$(whoami) | grep -qw incus; then \
-		sudo usermod -aG incus $$(whoami); \
-		echo "✅ Usuario añadido al grupo incus (ejecuta: newgrp incus)"; \
-	else \
-		echo "✅ Ya perteneces al grupo incus"; \
-	fi
+clean: ## Remove build output
+	rm -rf $(BINARY) dist
 
-create-server:
-	@echo "🚀 Creando servidor '$(NAME)' con $(RAM) de RAM y $(CPU) CPU..."
-	@if incus info $(NAME) >/dev/null 2>&1; then \
-		echo "✅ La instancia '$(NAME)' ya existe"; \
-	else \
-		incus launch images:ubuntu/24.04 $(NAME) -c limits.memory=$(RAM) -c limits.cpu=$(CPU) -c security.nesting=true; \
-		echo "⏳ Esperando arranque..."; \
-		sleep 4; \
-		echo "📦 Instalando Docker y dependencias en $(NAME)..."; \
-		incus exec $(NAME) -- apt-get update -qq; \
-		incus exec $(NAME) -- apt-get install -y -qq docker.io curl wireguard-tools; \
-		echo "✅ Servidor '$(NAME)' listo."; \
-	fi
+release: ## Tag a release and push the tag; CI builds and publishes it (TAG=v1.2.3)
+	@tag="$(TAG)"; \
+	[ -n "$$tag" ] || read -rp "New version (latest: $$(git describe --tags --abbrev=0 2>/dev/null || echo none)): " tag; \
+	[[ "$$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$$ ]] || { echo "Invalid version '$$tag' (expected vX.Y.Z)"; exit 1; }; \
+	[ -z "$$(git status --porcelain)" ] || { echo "Working tree is not clean"; exit 1; }; \
+	git tag -a "$$tag" -m "Release $$tag" && git push origin "$$tag" && \
+	echo "Pushed $$tag: GitHub Actions will build and publish the release"
 
-create-incus: create-server
+##@ Lab: Incus test servers (NAME= picks the instance; otherwise you are asked)
 
-delete-server:
-	@echo "🗑️  Eliminando servidor '$(NAME)'..."
-	-incus stop $(NAME) --force 2>/dev/null || true
-	-incus delete $(NAME) 2>/dev/null || true
-	@echo "✅ Servidor '$(NAME)' eliminado."
+lab-setup: ## Install and initialize Incus on this machine
+	@$(LAB) setup
+lab-create: ## Create a test server (NAME, RAM, CPU)
+	@$(LAB) create
+lab-delete: ## Delete a test server
+	@$(LAB) delete
+lab-list: ## List test servers
+	@$(LAB) list
+lab-shell: ## Open a shell in a test server
+	@$(LAB) shell
+lab-deploy: build ## Install the agent in a test server (creates it if needed)
+	@$(LAB) deploy
+lab-update: build ## Push fresh agent + CLI binaries and restart (NAME=all for every server)
+	@$(LAB) update
+lab-start: ## Enable and start the agent service
+	@$(LAB) start
+lab-stop: ## Stop the agent service
+	@$(LAB) stop
+lab-restart: ## Restart the agent service
+	@$(LAB) restart
+lab-status: ## Show the agent service status
+	@$(LAB) status
+lab-logs: ## Follow the agent logs
+	@$(LAB) logs
+lab-enroll: build ## Deploy and run the interactive `autohost up` enrollment
+	@$(LAB) enroll
+lab-link: build ## Deploy and link with an enrollment token (TOKEN=...)
+	@$(LAB) link
 
-list-servers:
-	@incus list
+##@ Lab: real node on the LAN over SSH (NODE_HOST, NODE_NAME, HOST_IP in lab.env)
 
-shell-server:
-	@INSTANCES=($$(incus list -c n --format csv)); \
-	if [ $${#INSTANCES[@]} -eq 0 ]; then \
-		echo "❌ No hay instancias Incus disponibles."; \
-		exit 1; \
-	elif [ "$$NAME" != "autohost-test" ] && [ -n "$$NAME" ] && incus info "$$NAME" >/dev/null 2>&1; then \
-		echo "🚀 Conectando a '$$NAME'..."; \
-		incus exec "$$NAME" -- bash; \
-	elif [ $${#INSTANCES[@]} -eq 1 ]; then \
-		echo "🚀 Conectando a $${INSTANCES[0]}..."; \
-		incus exec "$${INSTANCES[0]}" -- bash; \
-	else \
-		echo "📋 Servidores Incus disponibles:"; \
-		echo ""; \
-		for i in "$${!INSTANCES[@]}"; do \
-			STATUS=$$(incus list "$${INSTANCES[$$i]}" -c s --format csv); \
-			IPV4=$$(incus list "$${INSTANCES[$$i]}" -c 4 --format csv | head -n1); \
-			printf "  [\033[1;32m%d\033[0m] %-20s (\033[1;34m%s\033[0m, %s)\n" "$$((i+1))" "$${INSTANCES[$$i]}" "$$STATUS" "$$IPV4"; \
-		done; \
-		echo ""; \
-		printf "👉 Selecciona el número de servidor [1-%d]: " "$${#INSTANCES[@]}"; \
-		read -r CHOICE; \
-		if ! [[ "$$CHOICE" =~ ^[0-9]+$$ ]] || [ "$$CHOICE" -lt 1 ] || [ "$$CHOICE" -gt "$${#INSTANCES[@]}" ]; then \
-			echo "❌ Selección inválida"; \
-			exit 1; \
-		fi; \
-		SELECTED="$${INSTANCES[$$((CHOICE-1))]}"; \
-		echo "🚀 Conectando a $$SELECTED..."; \
-		incus exec "$$SELECTED" -- bash; \
-	fi
-
-# ─── Deployment & Lifecycle Management ──────────────────────────────────────
-
-deploy-incus: build
-	@echo "🚀 Desplegando autohost-agent en servidor '$(NAME)'..."
-	@incus info $(NAME) >/dev/null 2>&1 || $(MAKE) create-server NAME=$(NAME)
-	@echo "1. Preparando entorno y usuario del sistema en '$(NAME)'..."
-	incus exec $(NAME) -- sudo id -u autohost >/dev/null 2>&1 || incus exec $(NAME) -- sudo useradd --system --no-create-home --shell /usr/sbin/nologin autohost
-	incus exec $(NAME) -- sudo usermod -aG docker autohost 2>/dev/null || true
-	incus exec $(NAME) -- sudo mkdir -p /etc/autohost /var/lib/autohost
-	incus exec $(NAME) -- sudo chown autohost:autohost /var/lib/autohost
-	@echo "2. Transfiriendo binario y configuración..."
-	incus file push $(BINARY_NAME) $(NAME)/usr/local/bin/$(BINARY_NAME) --mode=0755
-	incus file push configs/agent.yaml $(NAME)/etc/autohost/config.yaml --mode=0640
-	incus exec $(NAME) -- sudo chown root:autohost /etc/autohost/config.yaml
-	incus file push autohost-agent.service $(NAME)/etc/systemd/system/autohost-agent.service --mode=0644
-	incus exec $(NAME) -- sudo systemctl daemon-reload
-	@echo ""
-	@echo "✅ Despliegue completado en '$(NAME)'!"
-	@echo "   Para iniciar: make start-incus NAME=$(NAME)"
-	@echo "   Para ver estado: make status-incus NAME=$(NAME)"
-
-update-incus: build
-	@INSTANCES=($$(incus list -c n --format csv)); \
-	if [ $${#INSTANCES[@]} -eq 0 ]; then \
-		echo "❌ No hay instancias Incus disponibles."; \
-		exit 1; \
-	elif [ "$$NAME" = "all" ] || [ "$$NAME" = "ALL" ]; then \
-		echo "⚡ Actualizando binario en TODOS los servidores ($${#INSTANCES[@]})..."; \
-		for inst in "$${INSTANCES[@]}"; do \
-			echo "📦 Transfiriendo y reiniciando en '$$inst'..."; \
-			incus file push $(BINARY_NAME) "$$inst/tmp/$(BINARY_NAME)" --mode=0755; \
-			incus exec "$$inst" -- sudo mv -f /tmp/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME); \
-			incus exec "$$inst" -- sudo systemctl restart autohost-agent; \
-			echo "   ✅ '$$inst' actualizado."; \
-		done; \
-		echo "🎉 Todos los servidores actualizados con éxito."; \
-	elif [ "$$NAME" != "autohost-test" ] && [ -n "$$NAME" ] && incus info "$$NAME" >/dev/null 2>&1; then \
-		echo "🔄 Actualizando binario en '$$NAME'..."; \
-		incus file push $(BINARY_NAME) "$$NAME/tmp/$(BINARY_NAME)" --mode=0755; \
-		incus exec "$$NAME" -- sudo mv -f /tmp/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME); \
-		incus exec "$$NAME" -- sudo systemctl restart autohost-agent; \
-		echo "✅ Agente actualizado y reiniciado en '$$NAME'."; \
-	else \
-		echo "📋 Servidores Incus disponibles para actualizar:"; \
-		echo ""; \
-		printf "  [\033[1;33m0\033[0m] \033[1;33m⚡ ACTUALIZAR EN TODOS LOS SERVIDORES A LA VEZ\033[0m\n"; \
-		for i in "$${!INSTANCES[@]}"; do \
-			STATUS=$$(incus list "$${INSTANCES[$$i]}" -c s --format csv); \
-			IPV4=$$(incus list "$${INSTANCES[$$i]}" -c 4 --format csv | head -n1); \
-			printf "  [\033[1;32m%d\033[0m] %-20s (\033[1;34m%s\033[0m, %s)\n" "$$((i+1))" "$${INSTANCES[$$i]}" "$$STATUS" "$$IPV4"; \
-		done; \
-		echo ""; \
-		printf "👉 Selecciona el número de servidor [0-%d]: " "$${#INSTANCES[@]}"; \
-		read -r CHOICE; \
-		if [ "$$CHOICE" = "0" ] || [ "$$CHOICE" = "all" ] || [ "$$CHOICE" = "ALL" ]; then \
-			echo ""; \
-			echo "⚡ Actualizando binario en TODOS los servidores ($${#INSTANCES[@]})..."; \
-			for inst in "$${INSTANCES[@]}"; do \
-				echo "📦 Transfiriendo y reiniciando en '$$inst'..."; \
-				incus file push $(BINARY_NAME) "$$inst/tmp/$(BINARY_NAME)" --mode=0755; \
-				incus exec "$$inst" -- sudo mv -f /tmp/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME); \
-				incus exec "$$inst" -- sudo systemctl restart autohost-agent; \
-				echo "   ✅ '$$inst' actualizado."; \
-			done; \
-			echo "🎉 Todos los servidores actualizados con éxito."; \
-		elif ! [[ "$$CHOICE" =~ ^[0-9]+$$ ]] || [ "$$CHOICE" -lt 1 ] || [ "$$CHOICE" -gt "$${#INSTANCES[@]}" ]; then \
-			echo "❌ Selección inválida"; \
-			exit 1; \
-		else \
-			SELECTED="$${INSTANCES[$$((CHOICE-1))]}"; \
-			echo "🔄 Actualizando binario en '$$SELECTED'..."; \
-			incus file push $(BINARY_NAME) "$$SELECTED/tmp/$(BINARY_NAME)" --mode=0755; \
-			incus exec "$$SELECTED" -- sudo mv -f /tmp/$(BINARY_NAME) /usr/local/bin/$(BINARY_NAME); \
-			incus exec "$$SELECTED" -- sudo systemctl restart autohost-agent; \
-			echo "✅ Agente actualizado y reiniciado en '$$SELECTED'."; \
-		fi; \
-	fi
-
-
-start-incus:
-	@echo "▶️  Iniciando autohost-agent en '$(NAME)'..."
-	incus exec $(NAME) -- sudo systemctl enable --now autohost-agent
-	@echo "✅ Servicio iniciado en '$(NAME)'."
-
-stop-incus:
-	@echo "⏹  Deteniendo autohost-agent en '$(NAME)'..."
-	incus exec $(NAME) -- sudo systemctl stop autohost-agent
-	@echo "✅ Servicio detenido."
-
-restart-incus:
-	@echo "🔄 Reiniciando autohost-agent en '$(NAME)'..."
-	incus exec $(NAME) -- sudo systemctl restart autohost-agent
-	@echo "✅ Servicio reiniciado en '$(NAME)'."
-
-status-incus:
-	incus exec $(NAME) -- sudo systemctl status autohost-agent
-
-logs-incus:
-	incus exec $(NAME) -- sudo journalctl -u autohost-agent -f
-
-shell-incus: shell-server
-	1
-# ─── Enrollment Helpers ─────────────────────────────────────────────────────
-
-enroll-server: deploy-incus
-	@echo "🔗 Enrolando servidor '$(NAME)' en AutoHost..."
-	@GATEWAY=$$(incus exec $(NAME) -- sh -c "ip route show default" | awk '/default/{print $$3}' | head -1); \
-	 echo "   Host Gateway: $$GATEWAY"; \
-	 echo "🔨 Compilando autohost-cli..."; \
-	 (cd ../autohost-cli && go build -o dist/autohost main.go); \
-	 incus file push ../autohost-cli/dist/autohost $(NAME)/usr/local/bin/autohost --mode=0755; \
-	 echo "🚀 Iniciando asistente 'autohost up'..."; \
-	 incus exec $(NAME) -- env AUTOHOST_CLOUD_URL="http://localhost:3000" AUTOHOST_API_URL="http://$$GATEWAY:8080" autohost up
-
-link-server: deploy-incus
-	@if [ -z "$(TOKEN)" ]; then echo "❌ Error: Especifica el token con TOKEN=<tu_token>"; exit 1; fi
-	@GATEWAY=$$(incus exec $(NAME) -- sh -c "ip route show default" | awk '/default/{print $$3}' | head -1); \
-	 echo "   Host Gateway: $$GATEWAY"; \
-	 echo "🔨 Compilando autohost-cli..."; \
-	 (cd ../autohost-cli && go build -o dist/autohost main.go); \
-	 incus file push ../autohost-cli/dist/autohost $(NAME)/usr/local/bin/autohost --mode=0755; \
-	 echo "🚀 Vinculando nodo con token..."; \
-	 incus exec $(NAME) -- autohost enroll link --api http://$$GATEWAY:8080 --token $(TOKEN) --name $(NAME); \
-	 incus exec $(NAME) -- sudo systemctl restart autohost-agent; \
-	 echo "✅ Servidor '$(NAME)' vinculado y activo en AutoHost."
-
-# ===== Remote Node Config (LAN) ===== #
-NODE_IP   ?= 192.168.101.33
-NODE_USER ?= arturo
-NODE_HOST ?= $(NODE_USER)@$(NODE_IP)
-NODE_NAME ?= mazapan
-HOST_IP   ?= 192.168.101.2
-API_PORT  ?= 8080
-GRPC_PORT ?= 9090
-
-.PHONY: node-update node-setup node-setup-hypervisor node-logs node-status node-shell
-
-node-update: build
-	@echo "🔨 Compilando autohost-cli..."
-	@(cd ../autohost-cli && go build -ldflags "-s -w" -o autohost main.go)
-	@echo "🚀 Transfiriendo binarios a $(NODE_HOST)..."
-	@scp ../autohost-cli/autohost $(NODE_HOST):/tmp/autohost
-	@scp $(BINARY_NAME) $(NODE_HOST):/tmp/autohost-agent
-	@echo "📦 Instalando binarios y reiniciando agente en $(NODE_HOST)..."
-	@ssh $(NODE_HOST) "sudo install -m 0755 /tmp/autohost /usr/local/bin/autohost && \
-		sudo install -m 0755 /tmp/autohost-agent /usr/local/bin/autohost-agent && \
-		rm -f /tmp/autohost /tmp/autohost-agent && \
-		sudo systemctl restart autohost-agent"
-	@echo "✅ Binarios actualizados y servicio reiniciado en $(NODE_IP)!"
-	@ssh $(NODE_HOST) "sudo systemctl status autohost-agent --no-pager | head -n 12"
-
-node-setup: node-update
-	@echo "🔑 Generando token de enrolamiento en base de datos local..."
-	@TOKEN=$$(python3 -c "import os, base64, hashlib, subprocess; \
-		raw = os.urandom(32); \
-		plain = 'autohost-enr_' + base64.urlsafe_b64encode(raw).decode().rstrip('='); \
-		h = hashlib.sha256(plain.encode()).hexdigest(); \
-		cid = subprocess.check_output(['docker', 'ps', '-q', '-f', 'name=postgres']).decode().strip().split()[0]; \
-		subprocess.run(['docker', 'exec', '-i', cid, 'psql', '-U', 'autohost', '-d', 'autohost', '-c', \
-			f\"INSERT INTO enroll_tokens (token, user_id, expires_at) VALUES ('{h}', 'a5cd786b-6cb5-4a79-997c-efe78b0cfa24', NOW() + INTERVAL '24 hours');\"], \
-			check=True, stdout=subprocess.DEVNULL); \
-		print(plain)"); \
-	 echo "   Token generado: $$TOKEN"; \
-	 echo "🔗 Enrolando nodo $(NODE_NAME) en http://$(HOST_IP):$(API_PORT)..."; \
-	 ssh $(NODE_HOST) "sudo autohost enroll link --api http://$(HOST_IP):$(API_PORT) --token $$TOKEN --name $(NODE_NAME) && \
-		sudo sed -i 's|grpc_address:.*|grpc_address: \"$(HOST_IP):$(GRPC_PORT)\"|g' /etc/autohost/config.yaml && \
-		sudo systemctl daemon-reload && \
-		sudo systemctl enable --now autohost-agent && \
-		sudo systemctl restart autohost-agent"; \
-	 echo "🎉 Nodo '$(NODE_NAME)' ($(NODE_IP)) configurado y conectado a AutoHost!"; \
-	 echo "🌐 Disponible en dashboard: http://localhost:3000"
-
-node-setup-hypervisor:
-	@echo "⚡ Instalando KVM/libvirt en nodo remoto $(NODE_HOST)..."
-	@ssh $(NODE_HOST) "yes | sudo autohost setup hypervisor && sudo usermod -aG libvirt,kvm autohost && sudo sed -i 's|SupplementaryGroups=docker.*|SupplementaryGroups=docker libvirt kvm|g' /etc/systemd/system/autohost-agent.service 2>/dev/null || true && sudo systemctl daemon-reload && sudo systemctl restart autohost-agent"
-	@echo "✅ Hypervisor configurado y servicio reiniciado en $(NODE_IP)!"
-
-node-logs:
-	@ssh $(NODE_HOST) "sudo journalctl -u autohost-agent -f"
-
-node-status:
-	@ssh $(NODE_HOST) "sudo systemctl status autohost-agent"
-
-node-shell:
-	@ssh -t $(NODE_HOST) "bash -l"
-
+node-update: build ## Copy fresh agent + CLI binaries to the node and restart
+	@$(LAB) node-update
+node-setup: build ## Update binaries, create an enrollment token and enroll the node
+	@$(LAB) node-setup
+node-hypervisor: ## Install KVM/libvirt on the node
+	@$(LAB) node-hypervisor
+node-status: ## Show the agent service status on the node
+	@$(LAB) node-status
+node-logs: ## Follow the agent logs on the node
+	@$(LAB) node-logs
+node-shell: ## Open a shell on the node
+	@$(LAB) node-shell

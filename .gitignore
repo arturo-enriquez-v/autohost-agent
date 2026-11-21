@@ -31,3 +31,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local lab settings (see lab.env.example)
+lab.env
