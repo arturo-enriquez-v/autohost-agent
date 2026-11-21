@@ -35,7 +35,40 @@ func SafeSharedPath(relPath string) (string, error) {
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return "", fmt.Errorf("invalid path outside shared directory")
 	}
+	// The agent runs as root: a symlink inside the shared folder (e.g. created by a container that mounts
+	// it) must not let file operations reach the rest of the host. Resolve the existing part of the path.
+	if !resolvedWithin(base, full) {
+		return "", fmt.Errorf("invalid path: symlink escapes the shared directory")
+	}
 	return full, nil
+}
+
+// resolvedWithin resolves symlinks in the deepest existing ancestor of target (target itself may not exist
+// yet, e.g. an upload destination) and reports whether the result is base or inside it.
+func resolvedWithin(base, target string) bool {
+	realBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		return true // base does not exist yet: nothing under it can be a symlink
+	}
+	existing := target
+	var rest []string
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return false
+		}
+		rest = append([]string{filepath.Base(existing)}, rest...)
+		existing = parent
+	}
+	realExisting, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return false
+	}
+	resolved := filepath.Join(append([]string{realExisting}, rest...)...)
+	return resolved == realBase || strings.HasPrefix(resolved, realBase+string(filepath.Separator))
 }
 
 func GetSubdir(subdir string) string {
