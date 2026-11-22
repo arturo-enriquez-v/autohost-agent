@@ -4,6 +4,17 @@
 // - protoc             v3.21.12
 // source: proto/node_agent/v1/node_agent.proto
 
+// Protocol between the AutoHost API (server) and the node agent (client).
+//
+// The agent dials the API and authenticates every RPC with its node token in the
+// "authorization" metadata ("Bearer autohost-node_...") and, when mTLS is configured, with its
+// client certificate (CN = node ID). The node is always taken from those credentials, never from a
+// message field. See api/grpc.md for the connection lifecycle and the message flows.
+//
+// Compatibility: agents and API servers of different versions talk to each other. Never renumber or
+// reuse a field, add new fields instead of changing the meaning of existing ones, and make every new
+// field optional for the receiver (the zero value must mean "not set").
+
 package nodepb
 
 import (
@@ -28,11 +39,15 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NodeAgentServiceClient interface {
-	// Agent streams its commands; server upserts them all, then acks.
+	// Announces the agent's commands. Called on every (re)connection, before Connect: the agent streams
+	// one RegisterCommandRequest per command and the API answers once with how many it upserted.
 	RegisterCommands(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[RegisterCommandRequest, RegisterCommandsResponse], error)
-	// Long-lived bidirectional stream used to dispatch jobs and receive results.
+	// The agent's long-lived session. While it is open the node is online and the API can send it jobs
+	// and requests; the agent sends heartbeats, metrics and results. The agent reconnects 10 s after the
+	// stream ends. The API re-checks the node's enrollment every minute and closes the stream with
+	// UNAUTHENTICATED if the node was deleted or its tokens revoked.
 	Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[NodeMessage, ServerMessage], error)
-	// Send node system metrics to the server.
+	// Legacy: only authenticates and logs the sample; nothing is stored. Use MetricPayload on Connect.
 	ReportMetrics(ctx context.Context, in *MetricRequest, opts ...grpc.CallOption) (*MetricResponse, error)
 }
 
@@ -84,11 +99,15 @@ func (c *nodeAgentServiceClient) ReportMetrics(ctx context.Context, in *MetricRe
 // All implementations must embed UnimplementedNodeAgentServiceServer
 // for forward compatibility.
 type NodeAgentServiceServer interface {
-	// Agent streams its commands; server upserts them all, then acks.
+	// Announces the agent's commands. Called on every (re)connection, before Connect: the agent streams
+	// one RegisterCommandRequest per command and the API answers once with how many it upserted.
 	RegisterCommands(grpc.ClientStreamingServer[RegisterCommandRequest, RegisterCommandsResponse]) error
-	// Long-lived bidirectional stream used to dispatch jobs and receive results.
+	// The agent's long-lived session. While it is open the node is online and the API can send it jobs
+	// and requests; the agent sends heartbeats, metrics and results. The agent reconnects 10 s after the
+	// stream ends. The API re-checks the node's enrollment every minute and closes the stream with
+	// UNAUTHENTICATED if the node was deleted or its tokens revoked.
 	Connect(grpc.BidiStreamingServer[NodeMessage, ServerMessage]) error
-	// Send node system metrics to the server.
+	// Legacy: only authenticates and logs the sample; nothing is stored. Use MetricPayload on Connect.
 	ReportMetrics(context.Context, *MetricRequest) (*MetricResponse, error)
 	mustEmbedUnimplementedNodeAgentServiceServer()
 }

@@ -46,7 +46,8 @@ pkg/sysinfo               lectura de CPU, memoria, disco y red
 - **Jobs nuevos**: un archivo en `internal/dispatcher`, registrarlo en `command.go`, test de las
   validaciones (`*_test.go` al lado). El nombre del job (`dominio.accion`) tiene que coincidir con el que
   manda la API.
-- **Proto**: el contrato vive en `../autohost-cloud-api/proto`. Tras `make proto` allí, actualizar
+- **Proto**: el contrato vive en `../autohost-cloud-api/proto` y los flujos se explican en
+  `../autohost-cloud-api/api/grpc.md`. Tras `make proto` allí, copiar los `.pb.go` a
   `internal/transport/nodepb` aquí. Campos nuevos opcionales para que agente y API de versiones distintas
   sigan entendiéndose.
 - El código debe compilar para linux/amd64 y linux/arm64 (`make build-all`); lo específico de Linux va en

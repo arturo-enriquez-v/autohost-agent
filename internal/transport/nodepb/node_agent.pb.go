@@ -4,6 +4,17 @@
 // 	protoc        v3.21.12
 // source: proto/node_agent/v1/node_agent.proto
 
+// Protocol between the AutoHost API (server) and the node agent (client).
+//
+// The agent dials the API and authenticates every RPC with its node token in the
+// "authorization" metadata ("Bearer autohost-node_...") and, when mTLS is configured, with its
+// client certificate (CN = node ID). The node is always taken from those credentials, never from a
+// message field. See api/grpc.md for the connection lifecycle and the message flows.
+//
+// Compatibility: agents and API servers of different versions talk to each other. Never renumber or
+// reuse a field, add new fields instead of changing the meaning of existing ones, and make every new
+// field optional for the receiver (the zero value must mean "not set").
+
 package nodepb
 
 import (
@@ -21,13 +32,14 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Kind of command, mirrored by the API's job `command_type`.
 type CommandType int32
 
 const (
-	CommandType_COMMAND_TYPE_DEFAULT     CommandType = 0
-	CommandType_COMMAND_TYPE_CUSTOM      CommandType = 1
-	CommandType_COMMAND_TYPE_INSTALL_APP CommandType = 2
-	CommandType_COMMAND_TYPE_SWARM       CommandType = 3
+	CommandType_COMMAND_TYPE_DEFAULT     CommandType = 0 // Built-in command of the agent (see its dispatcher registry).
+	CommandType_COMMAND_TYPE_CUSTOM      CommandType = 1 // A `.sh` script in the node's custom commands directory.
+	CommandType_COMMAND_TYPE_INSTALL_APP CommandType = 2 // Marketplace install; `params` carries the compose file and settings.
+	CommandType_COMMAND_TYPE_SWARM       CommandType = 3 // Docker Swarm operation for clusters.
 )
 
 // Enum value maps for CommandType.
@@ -73,12 +85,12 @@ func (CommandType) EnumDescriptor() ([]byte, []int) {
 	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{0}
 }
 
-// ProfileType selects what the agent should sample.
+// ProfileType selects what the agent should sample. Unused: see RequestProfilePayload.
 type ProfileType int32
 
 const (
-	ProfileType_PROFILE_TYPE_HEAP ProfileType = 0 // Heap / memory allocation snapshot (instantaneous)
-	ProfileType_PROFILE_TYPE_CPU  ProfileType = 1 // CPU sampling for duration_seconds
+	ProfileType_PROFILE_TYPE_HEAP ProfileType = 0 // Heap / memory allocation snapshot (instantaneous).
+	ProfileType_PROFILE_TYPE_CPU  ProfileType = 1 // CPU sampling for duration_seconds.
 )
 
 // Enum value maps for ProfileType.
@@ -120,6 +132,7 @@ func (ProfileType) EnumDescriptor() ([]byte, []int) {
 	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{1}
 }
 
+// Final state of a job. The agent only reports COMPLETED or FAILED; RUNNING is never sent.
 type JobStatus int32
 
 const (
@@ -172,12 +185,12 @@ func (JobStatus) EnumDescriptor() ([]byte, []int) {
 type FileOpType int32
 
 const (
-	FileOpType_FILE_OP_LIST          FileOpType = 0 // List directory entries in shared folder
-	FileOpType_FILE_OP_MKDIR         FileOpType = 1 // Create a directory inside shared folder
-	FileOpType_FILE_OP_DELETE        FileOpType = 2 // Delete a file or directory inside shared folder
-	FileOpType_FILE_OP_PUSH_TO_URL   FileOpType = 3 // Agent uploads a local shared file via HTTP POST to transfer_url
-	FileOpType_FILE_OP_PULL_FROM_URL FileOpType = 4 // Agent downloads a file via HTTP GET from transfer_url into shared folder
-	FileOpType_FILE_OP_RENAME        FileOpType = 5 // Rename or move a file/directory inside shared folder
+	FileOpType_FILE_OP_LIST          FileOpType = 0 // List the entries of `path`.
+	FileOpType_FILE_OP_MKDIR         FileOpType = 1 // Create the directory `path`.
+	FileOpType_FILE_OP_DELETE        FileOpType = 2 // Delete the file or directory `path`.
+	FileOpType_FILE_OP_PUSH_TO_URL   FileOpType = 3 // Upload the file `path` with an HTTP POST to transfer_url.
+	FileOpType_FILE_OP_PULL_FROM_URL FileOpType = 4 // Download transfer_url with an HTTP GET into `path`.
+	FileOpType_FILE_OP_RENAME        FileOpType = 5 // Rename or move `path` to dest_path.
 )
 
 // Enum value maps for FileOpType.
@@ -227,13 +240,15 @@ func (FileOpType) EnumDescriptor() ([]byte, []int) {
 	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{3}
 }
 
+// One command the agent can run. The agent streams one per command on every (re)connection,
+// before opening Connect; the API upserts them by (node, name).
 type RegisterCommandRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"` // validated against the auth token server-side
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"` // Ignored: the node comes from the credentials.
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`                   // Command name, e.g. "docker.install" or a custom script name.
 	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
 	Type          CommandType            `protobuf:"varint,4,opt,name=type,proto3,enum=node_agent.v1.CommandType" json:"type,omitempty"`
-	ScriptPath    string                 `protobuf:"bytes,5,opt,name=script_path,json=scriptPath,proto3" json:"script_path,omitempty"` // only set for COMMAND_TYPE_CUSTOM
+	ScriptPath    string                 `protobuf:"bytes,5,opt,name=script_path,json=scriptPath,proto3" json:"script_path,omitempty"` // Only for COMMAND_TYPE_CUSTOM: absolute path of the script on the node.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -303,9 +318,10 @@ func (x *RegisterCommandRequest) GetScriptPath() string {
 	return ""
 }
 
+// Sent once, after the agent closes the RegisterCommands stream.
 type RegisterCommandsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Registered    int32                  `protobuf:"varint,1,opt,name=registered,proto3" json:"registered,omitempty"` // total commands upserted in this batch
+	Registered    int32                  `protobuf:"varint,1,opt,name=registered,proto3" json:"registered,omitempty"` // Commands upserted in this batch (failed ones are skipped and logged).
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -347,6 +363,7 @@ func (x *RegisterCommandsResponse) GetRegistered() int32 {
 	return 0
 }
 
+// Everything the agent sends on the Connect stream. Exactly one payload is set.
 type NodeMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
@@ -528,55 +545,55 @@ type isNodeMessage_Payload interface {
 }
 
 type NodeMessage_JobResult struct {
-	JobResult *JobResultPayload `protobuf:"bytes,1,opt,name=job_result,json=jobResult,proto3,oneof"`
+	JobResult *JobResultPayload `protobuf:"bytes,1,opt,name=job_result,json=jobResult,proto3,oneof"` // Result of an ExecuteJobPayload.
 }
 
 type NodeMessage_Heartbeat struct {
-	Heartbeat *HeartbeatPayload `protobuf:"bytes,2,opt,name=heartbeat,proto3,oneof"`
+	Heartbeat *HeartbeatPayload `protobuf:"bytes,2,opt,name=heartbeat,proto3,oneof"` // Every 30 s.
 }
 
 type NodeMessage_LogEntry struct {
-	LogEntry *LogEntryPayload `protobuf:"bytes,3,opt,name=log_entry,json=logEntry,proto3,oneof"`
+	LogEntry *LogEntryPayload `protobuf:"bytes,3,opt,name=log_entry,json=logEntry,proto3,oneof"` // One per journald line while a log stream is active.
 }
 
 type NodeMessage_Metric struct {
-	Metric *MetricPayload `protobuf:"bytes,4,opt,name=metric,proto3,oneof"`
+	Metric *MetricPayload `protobuf:"bytes,4,opt,name=metric,proto3,oneof"` // Every 5 s.
 }
 
 type NodeMessage_HealthResult struct {
-	HealthResult *HealthCheckResultPayload `protobuf:"bytes,5,opt,name=health_result,json=healthResult,proto3,oneof"`
+	HealthResult *HealthCheckResultPayload `protobuf:"bytes,5,opt,name=health_result,json=healthResult,proto3,oneof"` // After each health check run.
 }
 
 type NodeMessage_ProfileData struct {
-	ProfileData *ProfileDataPayload `protobuf:"bytes,6,opt,name=profile_data,json=profileData,proto3,oneof"`
+	ProfileData *ProfileDataPayload `protobuf:"bytes,6,opt,name=profile_data,json=profileData,proto3,oneof"` // Unused.
 }
 
 type NodeMessage_ContainerList struct {
-	ContainerList *ContainerListPayload `protobuf:"bytes,7,opt,name=container_list,json=containerList,proto3,oneof"`
+	ContainerList *ContainerListPayload `protobuf:"bytes,7,opt,name=container_list,json=containerList,proto3,oneof"` // While a container stream is active.
 }
 
 type NodeMessage_LogDiagnostic struct {
-	LogDiagnostic *LogDiagnosticPayload `protobuf:"bytes,8,opt,name=log_diagnostic,json=logDiagnostic,proto3,oneof"`
+	LogDiagnostic *LogDiagnosticPayload `protobuf:"bytes,8,opt,name=log_diagnostic,json=logDiagnostic,proto3,oneof"` // Result of a CollectLogsPayload.
 }
 
 type NodeMessage_NetworkStats struct {
-	NetworkStats *NetworkStatsPayload `protobuf:"bytes,9,opt,name=network_stats,json=networkStats,proto3,oneof"`
+	NetworkStats *NetworkStatsPayload `protobuf:"bytes,9,opt,name=network_stats,json=networkStats,proto3,oneof"` // Result of a RequestNetworkStatsPayload.
 }
 
 type NodeMessage_HypervisorInfo struct {
-	HypervisorInfo *HypervisorInfoPayload `protobuf:"bytes,10,opt,name=hypervisor_info,json=hypervisorInfo,proto3,oneof"`
+	HypervisorInfo *HypervisorInfoPayload `protobuf:"bytes,10,opt,name=hypervisor_info,json=hypervisorInfo,proto3,oneof"` // Once per session, only on KVM hosts.
 }
 
 type NodeMessage_TerminalOutput struct {
-	TerminalOutput *TerminalOutputPayload `protobuf:"bytes,11,opt,name=terminal_output,json=terminalOutput,proto3,oneof"`
+	TerminalOutput *TerminalOutputPayload `protobuf:"bytes,11,opt,name=terminal_output,json=terminalOutput,proto3,oneof"` // PTY output of a terminal session.
 }
 
 type NodeMessage_TerminalClosed struct {
-	TerminalClosed *TerminalClosedPayload `protobuf:"bytes,12,opt,name=terminal_closed,json=terminalClosed,proto3,oneof"`
+	TerminalClosed *TerminalClosedPayload `protobuf:"bytes,12,opt,name=terminal_closed,json=terminalClosed,proto3,oneof"` // A terminal session ended.
 }
 
 type NodeMessage_FileOpResponse struct {
-	FileOpResponse *FileOperationResponsePayload `protobuf:"bytes,13,opt,name=file_op_response,json=fileOpResponse,proto3,oneof"`
+	FileOpResponse *FileOperationResponsePayload `protobuf:"bytes,13,opt,name=file_op_response,json=fileOpResponse,proto3,oneof"` // Result of a FileOperationRequestPayload.
 }
 
 func (*NodeMessage_JobResult) isNodeMessage_Payload() {}
@@ -605,248 +622,7 @@ func (*NodeMessage_TerminalClosed) isNodeMessage_Payload() {}
 
 func (*NodeMessage_FileOpResponse) isNodeMessage_Payload() {}
 
-// Reports whether the node can host virtual machines (KVM + libvirt) and how
-// many resources it has available for them. Sent once per Connect session.
-type HypervisorInfoPayload struct {
-	state                 protoimpl.MessageState `protogen:"open.v1"`
-	Capable               bool                   `protobuf:"varint,1,opt,name=capable,proto3" json:"capable,omitempty"`                                           // true when KVM and libvirt are both usable
-	KvmAvailable          bool                   `protobuf:"varint,2,opt,name=kvm_available,json=kvmAvailable,proto3" json:"kvm_available,omitempty"`             // /dev/kvm is present
-	LibvirtAvailable      bool                   `protobuf:"varint,3,opt,name=libvirt_available,json=libvirtAvailable,proto3" json:"libvirt_available,omitempty"` // virsh can reach qemu:///system
-	LibvirtVersion        string                 `protobuf:"bytes,4,opt,name=libvirt_version,json=libvirtVersion,proto3" json:"libvirt_version,omitempty"`
-	Reason                string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`                                                   // human-readable cause when capable == false
-	NetworkName           string                 `protobuf:"bytes,6,opt,name=network_name,json=networkName,proto3" json:"network_name,omitempty"`                      // libvirt network used for guests (e.g. "default")
-	CpuCores              uint32                 `protobuf:"varint,7,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`                              // host logical cores
-	RamTotalBytes         uint64                 `protobuf:"varint,8,opt,name=ram_total_bytes,json=ramTotalBytes,proto3" json:"ram_total_bytes,omitempty"`             // host RAM
-	StorageTotalBytes     uint64                 `protobuf:"varint,9,opt,name=storage_total_bytes,json=storageTotalBytes,proto3" json:"storage_total_bytes,omitempty"` // size of the VM storage pool filesystem
-	StorageAvailableBytes uint64                 `protobuf:"varint,10,opt,name=storage_available_bytes,json=storageAvailableBytes,proto3" json:"storage_available_bytes,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
-}
-
-func (x *HypervisorInfoPayload) Reset() {
-	*x = HypervisorInfoPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *HypervisorInfoPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*HypervisorInfoPayload) ProtoMessage() {}
-
-func (x *HypervisorInfoPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use HypervisorInfoPayload.ProtoReflect.Descriptor instead.
-func (*HypervisorInfoPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *HypervisorInfoPayload) GetCapable() bool {
-	if x != nil {
-		return x.Capable
-	}
-	return false
-}
-
-func (x *HypervisorInfoPayload) GetKvmAvailable() bool {
-	if x != nil {
-		return x.KvmAvailable
-	}
-	return false
-}
-
-func (x *HypervisorInfoPayload) GetLibvirtAvailable() bool {
-	if x != nil {
-		return x.LibvirtAvailable
-	}
-	return false
-}
-
-func (x *HypervisorInfoPayload) GetLibvirtVersion() string {
-	if x != nil {
-		return x.LibvirtVersion
-	}
-	return ""
-}
-
-func (x *HypervisorInfoPayload) GetReason() string {
-	if x != nil {
-		return x.Reason
-	}
-	return ""
-}
-
-func (x *HypervisorInfoPayload) GetNetworkName() string {
-	if x != nil {
-		return x.NetworkName
-	}
-	return ""
-}
-
-func (x *HypervisorInfoPayload) GetCpuCores() uint32 {
-	if x != nil {
-		return x.CpuCores
-	}
-	return 0
-}
-
-func (x *HypervisorInfoPayload) GetRamTotalBytes() uint64 {
-	if x != nil {
-		return x.RamTotalBytes
-	}
-	return 0
-}
-
-func (x *HypervisorInfoPayload) GetStorageTotalBytes() uint64 {
-	if x != nil {
-		return x.StorageTotalBytes
-	}
-	return 0
-}
-
-func (x *HypervisorInfoPayload) GetStorageAvailableBytes() uint64 {
-	if x != nil {
-		return x.StorageAvailableBytes
-	}
-	return 0
-}
-
-type MetricPayload struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	CpuUsagePercent    float32                `protobuf:"fixed32,1,opt,name=cpu_usage_percent,json=cpuUsagePercent,proto3" json:"cpu_usage_percent,omitempty"`
-	RamTotalBytes      uint64                 `protobuf:"varint,2,opt,name=ram_total_bytes,json=ramTotalBytes,proto3" json:"ram_total_bytes,omitempty"`
-	RamUsedBytes       uint64                 `protobuf:"varint,3,opt,name=ram_used_bytes,json=ramUsedBytes,proto3" json:"ram_used_bytes,omitempty"`
-	RamAvailableBytes  uint64                 `protobuf:"varint,4,opt,name=ram_available_bytes,json=ramAvailableBytes,proto3" json:"ram_available_bytes,omitempty"`
-	RamUsagePercent    float32                `protobuf:"fixed32,5,opt,name=ram_usage_percent,json=ramUsagePercent,proto3" json:"ram_usage_percent,omitempty"`
-	DiskTotalBytes     uint64                 `protobuf:"varint,6,opt,name=disk_total_bytes,json=diskTotalBytes,proto3" json:"disk_total_bytes,omitempty"`
-	DiskUsedBytes      uint64                 `protobuf:"varint,7,opt,name=disk_used_bytes,json=diskUsedBytes,proto3" json:"disk_used_bytes,omitempty"`
-	DiskAvailableBytes uint64                 `protobuf:"varint,8,opt,name=disk_available_bytes,json=diskAvailableBytes,proto3" json:"disk_available_bytes,omitempty"`
-	DiskUsagePercent   float32                `protobuf:"fixed32,9,opt,name=disk_usage_percent,json=diskUsagePercent,proto3" json:"disk_usage_percent,omitempty"`
-	UptimeSeconds      int64                  `protobuf:"varint,10,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
-	CpuTempCelsius     float32                `protobuf:"fixed32,11,opt,name=cpu_temp_celsius,json=cpuTempCelsius,proto3" json:"cpu_temp_celsius,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
-}
-
-func (x *MetricPayload) Reset() {
-	*x = MetricPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *MetricPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*MetricPayload) ProtoMessage() {}
-
-func (x *MetricPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use MetricPayload.ProtoReflect.Descriptor instead.
-func (*MetricPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *MetricPayload) GetCpuUsagePercent() float32 {
-	if x != nil {
-		return x.CpuUsagePercent
-	}
-	return 0
-}
-
-func (x *MetricPayload) GetRamTotalBytes() uint64 {
-	if x != nil {
-		return x.RamTotalBytes
-	}
-	return 0
-}
-
-func (x *MetricPayload) GetRamUsedBytes() uint64 {
-	if x != nil {
-		return x.RamUsedBytes
-	}
-	return 0
-}
-
-func (x *MetricPayload) GetRamAvailableBytes() uint64 {
-	if x != nil {
-		return x.RamAvailableBytes
-	}
-	return 0
-}
-
-func (x *MetricPayload) GetRamUsagePercent() float32 {
-	if x != nil {
-		return x.RamUsagePercent
-	}
-	return 0
-}
-
-func (x *MetricPayload) GetDiskTotalBytes() uint64 {
-	if x != nil {
-		return x.DiskTotalBytes
-	}
-	return 0
-}
-
-func (x *MetricPayload) GetDiskUsedBytes() uint64 {
-	if x != nil {
-		return x.DiskUsedBytes
-	}
-	return 0
-}
-
-func (x *MetricPayload) GetDiskAvailableBytes() uint64 {
-	if x != nil {
-		return x.DiskAvailableBytes
-	}
-	return 0
-}
-
-func (x *MetricPayload) GetDiskUsagePercent() float32 {
-	if x != nil {
-		return x.DiskUsagePercent
-	}
-	return 0
-}
-
-func (x *MetricPayload) GetUptimeSeconds() int64 {
-	if x != nil {
-		return x.UptimeSeconds
-	}
-	return 0
-}
-
-func (x *MetricPayload) GetCpuTempCelsius() float32 {
-	if x != nil {
-		return x.CpuTempCelsius
-	}
-	return 0
-}
-
+// Everything the API sends on the Connect stream. Exactly one payload is set.
 type ServerMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
@@ -873,7 +649,7 @@ type ServerMessage struct {
 
 func (x *ServerMessage) Reset() {
 	*x = ServerMessage{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[5]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -885,7 +661,7 @@ func (x *ServerMessage) String() string {
 func (*ServerMessage) ProtoMessage() {}
 
 func (x *ServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[5]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -898,7 +674,7 @@ func (x *ServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerMessage.ProtoReflect.Descriptor instead.
 func (*ServerMessage) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{5}
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ServerMessage) GetPayload() isServerMessage_Payload {
@@ -1048,63 +824,63 @@ type isServerMessage_Payload interface {
 }
 
 type ServerMessage_ExecuteJob struct {
-	ExecuteJob *ExecuteJobPayload `protobuf:"bytes,1,opt,name=execute_job,json=executeJob,proto3,oneof"`
+	ExecuteJob *ExecuteJobPayload `protobuf:"bytes,1,opt,name=execute_job,json=executeJob,proto3,oneof"` // Run a job; answered with JobResultPayload.
 }
 
 type ServerMessage_StreamLogs struct {
-	StreamLogs *StreamLogsPayload `protobuf:"bytes,2,opt,name=stream_logs,json=streamLogs,proto3,oneof"`
+	StreamLogs *StreamLogsPayload `protobuf:"bytes,2,opt,name=stream_logs,json=streamLogs,proto3,oneof"` // Start following journald.
 }
 
 type ServerMessage_StopLogs struct {
-	StopLogs *StopLogsPayload `protobuf:"bytes,3,opt,name=stop_logs,json=stopLogs,proto3,oneof"`
+	StopLogs *StopLogsPayload `protobuf:"bytes,3,opt,name=stop_logs,json=stopLogs,proto3,oneof"` // Stop following journald.
 }
 
 type ServerMessage_ConfigureHealthCheck struct {
-	ConfigureHealthCheck *ConfigureHealthCheckPayload `protobuf:"bytes,4,opt,name=configure_health_check,json=configureHealthCheck,proto3,oneof"`
+	ConfigureHealthCheck *ConfigureHealthCheckPayload `protobuf:"bytes,4,opt,name=configure_health_check,json=configureHealthCheck,proto3,oneof"` // Create or update a health check.
 }
 
 type ServerMessage_StopHealthCheck struct {
-	StopHealthCheck *StopHealthCheckPayload `protobuf:"bytes,5,opt,name=stop_health_check,json=stopHealthCheck,proto3,oneof"`
+	StopHealthCheck *StopHealthCheckPayload `protobuf:"bytes,5,opt,name=stop_health_check,json=stopHealthCheck,proto3,oneof"` // Remove a health check.
 }
 
 type ServerMessage_RequestProfile struct {
-	RequestProfile *RequestProfilePayload `protobuf:"bytes,6,opt,name=request_profile,json=requestProfile,proto3,oneof"`
+	RequestProfile *RequestProfilePayload `protobuf:"bytes,6,opt,name=request_profile,json=requestProfile,proto3,oneof"` // Unused.
 }
 
 type ServerMessage_StreamContainers struct {
-	StreamContainers *StreamContainersPayload `protobuf:"bytes,7,opt,name=stream_containers,json=streamContainers,proto3,oneof"`
+	StreamContainers *StreamContainersPayload `protobuf:"bytes,7,opt,name=stream_containers,json=streamContainers,proto3,oneof"` // Start reporting containers.
 }
 
 type ServerMessage_StopContainers struct {
-	StopContainers *StopContainersPayload `protobuf:"bytes,8,opt,name=stop_containers,json=stopContainers,proto3,oneof"`
+	StopContainers *StopContainersPayload `protobuf:"bytes,8,opt,name=stop_containers,json=stopContainers,proto3,oneof"` // Stop reporting containers.
 }
 
 type ServerMessage_CollectLogs struct {
-	CollectLogs *CollectLogsPayload `protobuf:"bytes,9,opt,name=collect_logs,json=collectLogs,proto3,oneof"`
+	CollectLogs *CollectLogsPayload `protobuf:"bytes,9,opt,name=collect_logs,json=collectLogs,proto3,oneof"` // Collect logs for a diagnostic.
 }
 
 type ServerMessage_RequestNetworkStats struct {
-	RequestNetworkStats *RequestNetworkStatsPayload `protobuf:"bytes,10,opt,name=request_network_stats,json=requestNetworkStats,proto3,oneof"`
+	RequestNetworkStats *RequestNetworkStatsPayload `protobuf:"bytes,10,opt,name=request_network_stats,json=requestNetworkStats,proto3,oneof"` // Ask for a network snapshot now.
 }
 
 type ServerMessage_StartTerminal struct {
-	StartTerminal *StartTerminalPayload `protobuf:"bytes,11,opt,name=start_terminal,json=startTerminal,proto3,oneof"`
+	StartTerminal *StartTerminalPayload `protobuf:"bytes,11,opt,name=start_terminal,json=startTerminal,proto3,oneof"` // Open a PTY session.
 }
 
 type ServerMessage_TerminalInput struct {
-	TerminalInput *TerminalInputPayload `protobuf:"bytes,12,opt,name=terminal_input,json=terminalInput,proto3,oneof"`
+	TerminalInput *TerminalInputPayload `protobuf:"bytes,12,opt,name=terminal_input,json=terminalInput,proto3,oneof"` // Keystrokes for a PTY session.
 }
 
 type ServerMessage_TerminalResize struct {
-	TerminalResize *TerminalResizePayload `protobuf:"bytes,13,opt,name=terminal_resize,json=terminalResize,proto3,oneof"`
+	TerminalResize *TerminalResizePayload `protobuf:"bytes,13,opt,name=terminal_resize,json=terminalResize,proto3,oneof"` // Resize a PTY session.
 }
 
 type ServerMessage_CloseTerminal struct {
-	CloseTerminal *CloseTerminalPayload `protobuf:"bytes,14,opt,name=close_terminal,json=closeTerminal,proto3,oneof"`
+	CloseTerminal *CloseTerminalPayload `protobuf:"bytes,14,opt,name=close_terminal,json=closeTerminal,proto3,oneof"` // Close a PTY session.
 }
 
 type ServerMessage_FileOpRequest struct {
-	FileOpRequest *FileOperationRequestPayload `protobuf:"bytes,15,opt,name=file_op_request,json=fileOpRequest,proto3,oneof"`
+	FileOpRequest *FileOperationRequestPayload `protobuf:"bytes,15,opt,name=file_op_request,json=fileOpRequest,proto3,oneof"` // File operation in the shared folder.
 }
 
 func (*ServerMessage_ExecuteJob) isServerMessage_Payload() {}
@@ -1137,31 +913,39 @@ func (*ServerMessage_CloseTerminal) isServerMessage_Payload() {}
 
 func (*ServerMessage_FileOpRequest) isServerMessage_Payload() {}
 
-type JobResultPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
-	Status        JobStatus              `protobuf:"varint,2,opt,name=status,proto3,enum=node_agent.v1.JobStatus" json:"status,omitempty"`
-	Output        string                 `protobuf:"bytes,3,opt,name=output,proto3" json:"output,omitempty"`
-	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+// Whether the node can host virtual machines (KVM + libvirt) and its capacity for them. Sent once per
+// Connect session, and only when KVM and libvirt are usable; other nodes never send it.
+type HypervisorInfoPayload struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	Capable               bool                   `protobuf:"varint,1,opt,name=capable,proto3" json:"capable,omitempty"`                                           // True when KVM and libvirt are both usable.
+	KvmAvailable          bool                   `protobuf:"varint,2,opt,name=kvm_available,json=kvmAvailable,proto3" json:"kvm_available,omitempty"`             // /dev/kvm is present.
+	LibvirtAvailable      bool                   `protobuf:"varint,3,opt,name=libvirt_available,json=libvirtAvailable,proto3" json:"libvirt_available,omitempty"` // virsh can reach qemu:///system.
+	LibvirtVersion        string                 `protobuf:"bytes,4,opt,name=libvirt_version,json=libvirtVersion,proto3" json:"libvirt_version,omitempty"`
+	Reason                string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`                                                   // Human-readable cause when capable is false.
+	NetworkName           string                 `protobuf:"bytes,6,opt,name=network_name,json=networkName,proto3" json:"network_name,omitempty"`                      // libvirt network used for guests, e.g. "default".
+	CpuCores              uint32                 `protobuf:"varint,7,opt,name=cpu_cores,json=cpuCores,proto3" json:"cpu_cores,omitempty"`                              // Host logical cores.
+	RamTotalBytes         uint64                 `protobuf:"varint,8,opt,name=ram_total_bytes,json=ramTotalBytes,proto3" json:"ram_total_bytes,omitempty"`             // Host RAM.
+	StorageTotalBytes     uint64                 `protobuf:"varint,9,opt,name=storage_total_bytes,json=storageTotalBytes,proto3" json:"storage_total_bytes,omitempty"` // Size of the filesystem holding the VM storage pool.
+	StorageAvailableBytes uint64                 `protobuf:"varint,10,opt,name=storage_available_bytes,json=storageAvailableBytes,proto3" json:"storage_available_bytes,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
-func (x *JobResultPayload) Reset() {
-	*x = JobResultPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[6]
+func (x *HypervisorInfoPayload) Reset() {
+	*x = HypervisorInfoPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *JobResultPayload) String() string {
+func (x *HypervisorInfoPayload) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*JobResultPayload) ProtoMessage() {}
+func (*HypervisorInfoPayload) ProtoMessage() {}
 
-func (x *JobResultPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[6]
+func (x *HypervisorInfoPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1172,49 +956,92 @@ func (x *JobResultPayload) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use JobResultPayload.ProtoReflect.Descriptor instead.
-func (*JobResultPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{6}
+// Deprecated: Use HypervisorInfoPayload.ProtoReflect.Descriptor instead.
+func (*HypervisorInfoPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *JobResultPayload) GetJobId() string {
+func (x *HypervisorInfoPayload) GetCapable() bool {
 	if x != nil {
-		return x.JobId
+		return x.Capable
+	}
+	return false
+}
+
+func (x *HypervisorInfoPayload) GetKvmAvailable() bool {
+	if x != nil {
+		return x.KvmAvailable
+	}
+	return false
+}
+
+func (x *HypervisorInfoPayload) GetLibvirtAvailable() bool {
+	if x != nil {
+		return x.LibvirtAvailable
+	}
+	return false
+}
+
+func (x *HypervisorInfoPayload) GetLibvirtVersion() string {
+	if x != nil {
+		return x.LibvirtVersion
 	}
 	return ""
 }
 
-func (x *JobResultPayload) GetStatus() JobStatus {
+func (x *HypervisorInfoPayload) GetReason() string {
 	if x != nil {
-		return x.Status
-	}
-	return JobStatus_JOB_STATUS_RUNNING
-}
-
-func (x *JobResultPayload) GetOutput() string {
-	if x != nil {
-		return x.Output
+		return x.Reason
 	}
 	return ""
 }
 
-func (x *JobResultPayload) GetError() string {
+func (x *HypervisorInfoPayload) GetNetworkName() string {
 	if x != nil {
-		return x.Error
+		return x.NetworkName
 	}
 	return ""
 }
 
+func (x *HypervisorInfoPayload) GetCpuCores() uint32 {
+	if x != nil {
+		return x.CpuCores
+	}
+	return 0
+}
+
+func (x *HypervisorInfoPayload) GetRamTotalBytes() uint64 {
+	if x != nil {
+		return x.RamTotalBytes
+	}
+	return 0
+}
+
+func (x *HypervisorInfoPayload) GetStorageTotalBytes() uint64 {
+	if x != nil {
+		return x.StorageTotalBytes
+	}
+	return 0
+}
+
+func (x *HypervisorInfoPayload) GetStorageAvailableBytes() uint64 {
+	if x != nil {
+		return x.StorageAvailableBytes
+	}
+	return 0
+}
+
+// Liveness signal, every 30 s. Updates the node's last_seen_at and its online flag.
 type HeartbeatPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"` // Informational only: the node comes from the credentials.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HeartbeatPayload) Reset() {
 	*x = HeartbeatPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[7]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1226,7 +1053,7 @@ func (x *HeartbeatPayload) String() string {
 func (*HeartbeatPayload) ProtoMessage() {}
 
 func (x *HeartbeatPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[7]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1239,7 +1066,7 @@ func (x *HeartbeatPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatPayload.ProtoReflect.Descriptor instead.
 func (*HeartbeatPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{7}
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *HeartbeatPayload) GetNodeId() string {
@@ -1249,19 +1076,149 @@ func (x *HeartbeatPayload) GetNodeId() string {
 	return ""
 }
 
+// System metrics, every 5 s (the first one right after connecting). Every sample goes to live
+// subscribers (GET /v1/node-metrics/{nodeId}/live); the API stores at most one every 15 s and checks
+// the node's alert thresholds on those.
+type MetricPayload struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	CpuUsagePercent    float32                `protobuf:"fixed32,1,opt,name=cpu_usage_percent,json=cpuUsagePercent,proto3" json:"cpu_usage_percent,omitempty"` // 0-100.
+	RamTotalBytes      uint64                 `protobuf:"varint,2,opt,name=ram_total_bytes,json=ramTotalBytes,proto3" json:"ram_total_bytes,omitempty"`
+	RamUsedBytes       uint64                 `protobuf:"varint,3,opt,name=ram_used_bytes,json=ramUsedBytes,proto3" json:"ram_used_bytes,omitempty"`
+	RamAvailableBytes  uint64                 `protobuf:"varint,4,opt,name=ram_available_bytes,json=ramAvailableBytes,proto3" json:"ram_available_bytes,omitempty"`
+	RamUsagePercent    float32                `protobuf:"fixed32,5,opt,name=ram_usage_percent,json=ramUsagePercent,proto3" json:"ram_usage_percent,omitempty"` // 0-100.
+	DiskTotalBytes     uint64                 `protobuf:"varint,6,opt,name=disk_total_bytes,json=diskTotalBytes,proto3" json:"disk_total_bytes,omitempty"`     // Root filesystem.
+	DiskUsedBytes      uint64                 `protobuf:"varint,7,opt,name=disk_used_bytes,json=diskUsedBytes,proto3" json:"disk_used_bytes,omitempty"`
+	DiskAvailableBytes uint64                 `protobuf:"varint,8,opt,name=disk_available_bytes,json=diskAvailableBytes,proto3" json:"disk_available_bytes,omitempty"`
+	DiskUsagePercent   float32                `protobuf:"fixed32,9,opt,name=disk_usage_percent,json=diskUsagePercent,proto3" json:"disk_usage_percent,omitempty"` // 0-100.
+	UptimeSeconds      int64                  `protobuf:"varint,10,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
+	CpuTempCelsius     float32                `protobuf:"fixed32,11,opt,name=cpu_temp_celsius,json=cpuTempCelsius,proto3" json:"cpu_temp_celsius,omitempty"` // 0 when the node has no temperature sensor.
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *MetricPayload) Reset() {
+	*x = MetricPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetricPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetricPayload) ProtoMessage() {}
+
+func (x *MetricPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetricPayload.ProtoReflect.Descriptor instead.
+func (*MetricPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *MetricPayload) GetCpuUsagePercent() float32 {
+	if x != nil {
+		return x.CpuUsagePercent
+	}
+	return 0
+}
+
+func (x *MetricPayload) GetRamTotalBytes() uint64 {
+	if x != nil {
+		return x.RamTotalBytes
+	}
+	return 0
+}
+
+func (x *MetricPayload) GetRamUsedBytes() uint64 {
+	if x != nil {
+		return x.RamUsedBytes
+	}
+	return 0
+}
+
+func (x *MetricPayload) GetRamAvailableBytes() uint64 {
+	if x != nil {
+		return x.RamAvailableBytes
+	}
+	return 0
+}
+
+func (x *MetricPayload) GetRamUsagePercent() float32 {
+	if x != nil {
+		return x.RamUsagePercent
+	}
+	return 0
+}
+
+func (x *MetricPayload) GetDiskTotalBytes() uint64 {
+	if x != nil {
+		return x.DiskTotalBytes
+	}
+	return 0
+}
+
+func (x *MetricPayload) GetDiskUsedBytes() uint64 {
+	if x != nil {
+		return x.DiskUsedBytes
+	}
+	return 0
+}
+
+func (x *MetricPayload) GetDiskAvailableBytes() uint64 {
+	if x != nil {
+		return x.DiskAvailableBytes
+	}
+	return 0
+}
+
+func (x *MetricPayload) GetDiskUsagePercent() float32 {
+	if x != nil {
+		return x.DiskUsagePercent
+	}
+	return 0
+}
+
+func (x *MetricPayload) GetUptimeSeconds() int64 {
+	if x != nil {
+		return x.UptimeSeconds
+	}
+	return 0
+}
+
+func (x *MetricPayload) GetCpuTempCelsius() float32 {
+	if x != nil {
+		return x.CpuTempCelsius
+	}
+	return 0
+}
+
+// Run a job. Sent when the job is created if the node is connected; if not, the job stays pending in
+// the API. On reconnection the API only re-sends pending COMMAND_TYPE_INSTALL_APP jobs. The agent skips
+// a job_id it already completed and answers COMPLETED again.
 type ExecuteJobPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
-	CommandName   string                 `protobuf:"bytes,2,opt,name=command_name,json=commandName,proto3" json:"command_name,omitempty"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`                   // API job ID (UUID); echoed in JobResultPayload.
+	CommandName   string                 `protobuf:"bytes,2,opt,name=command_name,json=commandName,proto3" json:"command_name,omitempty"` // Registered command, e.g. "caddy.upsert-route" or a custom script name.
 	CommandType   CommandType            `protobuf:"varint,3,opt,name=command_type,json=commandType,proto3,enum=node_agent.v1.CommandType" json:"command_type,omitempty"`
-	Params        string                 `protobuf:"bytes,4,opt,name=params,proto3" json:"params,omitempty"` // JSON-encoded parameters (e.g. for INSTALL_APP)
+	Params        string                 `protobuf:"bytes,4,opt,name=params,proto3" json:"params,omitempty"` // JSON object with the command's parameters; empty when it takes none.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExecuteJobPayload) Reset() {
 	*x = ExecuteJobPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[8]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1273,7 +1230,7 @@ func (x *ExecuteJobPayload) String() string {
 func (*ExecuteJobPayload) ProtoMessage() {}
 
 func (x *ExecuteJobPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[8]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1286,7 +1243,7 @@ func (x *ExecuteJobPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteJobPayload.ProtoReflect.Descriptor instead.
 func (*ExecuteJobPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{8}
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ExecuteJobPayload) GetJobId() string {
@@ -1317,11 +1274,82 @@ func (x *ExecuteJobPayload) GetParams() string {
 	return ""
 }
 
-// Sent by server to ask the agent to start streaming logs.
+// Final result of a job, sent once per ExecuteJobPayload.
+type JobResultPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`                    // From ExecuteJobPayload.
+	Status        JobStatus              `protobuf:"varint,2,opt,name=status,proto3,enum=node_agent.v1.JobStatus" json:"status,omitempty"` // COMPLETED or FAILED.
+	Output        string                 `protobuf:"bytes,3,opt,name=output,proto3" json:"output,omitempty"`                               // Command output (stdout/stderr), also on failure.
+	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`                                 // Error message when status is FAILED.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JobResultPayload) Reset() {
+	*x = JobResultPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JobResultPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JobResultPayload) ProtoMessage() {}
+
+func (x *JobResultPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JobResultPayload.ProtoReflect.Descriptor instead.
+func (*JobResultPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *JobResultPayload) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *JobResultPayload) GetStatus() JobStatus {
+	if x != nil {
+		return x.Status
+	}
+	return JobStatus_JOB_STATUS_RUNNING
+}
+
+func (x *JobResultPayload) GetOutput() string {
+	if x != nil {
+		return x.Output
+	}
+	return ""
+}
+
+func (x *JobResultPayload) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+// Start following journald. Sent when the first user opens GET /v1/node-logs/{nodeId}/stream, and
+// again on reconnection while users are still subscribed. A new StreamLogsPayload replaces the
+// previous stream.
 type StreamLogsPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Unit          string                 `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`    // systemd unit name, e.g. "autohost-agent" or "" for all
-	Lines         int32                  `protobuf:"varint,2,opt,name=lines,proto3" json:"lines,omitempty"` // how many historical lines to tail first (0 = no history)
+	Unit          string                 `protobuf:"bytes,1,opt,name=unit,proto3" json:"unit,omitempty"`    // systemd unit, e.g. "autohost-agent", or "docker:<container>"; empty for all units.
+	Lines         int32                  `protobuf:"varint,2,opt,name=lines,proto3" json:"lines,omitempty"` // Past lines to send first (0 = only new lines).
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1370,7 +1398,7 @@ func (x *StreamLogsPayload) GetLines() int32 {
 	return 0
 }
 
-// Sent by server to ask the agent to stop streaming logs.
+// Stop following journald. Sent when the last subscriber leaves.
 type StopLogsPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1407,11 +1435,11 @@ func (*StopLogsPayload) Descriptor() ([]byte, []int) {
 	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{10}
 }
 
-// Sent by agent to the server, one per log line.
+// One journald line, while a log stream is active.
 type LogEntryPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	TimestampUs   int64                  `protobuf:"varint,1,opt,name=timestamp_us,json=timestampUs,proto3" json:"timestamp_us,omitempty"` // Unix microseconds
-	Unit          string                 `protobuf:"bytes,2,opt,name=unit,proto3" json:"unit,omitempty"`                                   // source systemd unit
+	TimestampUs   int64                  `protobuf:"varint,1,opt,name=timestamp_us,json=timestampUs,proto3" json:"timestamp_us,omitempty"` // Unix time in microseconds.
+	Unit          string                 `protobuf:"bytes,2,opt,name=unit,proto3" json:"unit,omitempty"`                                   // Source systemd unit.
 	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1468,28 +1496,259 @@ func (x *LogEntryPayload) GetMessage() string {
 	return ""
 }
 
-// Sent by the server to configure or update a health check on the agent.
+// Start reporting containers. Sent when the first user opens GET /v1/node-containers/{nodeId}/stream,
+// and again on reconnection while users are still subscribed.
+type StreamContainersPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StreamContainersPayload) Reset() {
+	*x = StreamContainersPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StreamContainersPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StreamContainersPayload) ProtoMessage() {}
+
+func (x *StreamContainersPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StreamContainersPayload.ProtoReflect.Descriptor instead.
+func (*StreamContainersPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{12}
+}
+
+// Stop reporting containers. Sent when the last subscriber leaves.
+type StopContainersPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StopContainersPayload) Reset() {
+	*x = StopContainersPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopContainersPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopContainersPayload) ProtoMessage() {}
+
+func (x *StopContainersPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopContainersPayload.ProtoReflect.Descriptor instead.
+func (*StopContainersPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{13}
+}
+
+// One Docker container within a ContainerListPayload.
+type ContainerInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Image         string                 `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
+	State         string                 `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`                    // "running", "exited", "paused", "restarting"...
+	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`                  // Human-readable, e.g. "Up 2 hours".
+	Cpu           string                 `protobuf:"bytes,6,opt,name=cpu,proto3" json:"cpu,omitempty"`                        // CPU usage, e.g. "0.12%". Only for running containers.
+	Mem           string                 `protobuf:"bytes,7,opt,name=mem,proto3" json:"mem,omitempty"`                        // Memory usage and limit, e.g. "12MiB / 1.9GiB". Only for running containers.
+	MemPerc       string                 `protobuf:"bytes,8,opt,name=mem_perc,json=memPerc,proto3" json:"mem_perc,omitempty"` // Memory usage, e.g. "0.61%". Only for running containers.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContainerInfo) Reset() {
+	*x = ContainerInfo{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerInfo) ProtoMessage() {}
+
+func (x *ContainerInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerInfo.ProtoReflect.Descriptor instead.
+func (*ContainerInfo) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ContainerInfo) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetCpu() string {
+	if x != nil {
+		return x.Cpu
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetMem() string {
+	if x != nil {
+		return x.Mem
+	}
+	return ""
+}
+
+func (x *ContainerInfo) GetMemPerc() string {
+	if x != nil {
+		return x.MemPerc
+	}
+	return ""
+}
+
+// Full snapshot of the node's containers, sent whenever it changes while a container stream is active.
+type ContainerListPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Containers    []*ContainerInfo       `protobuf:"bytes,1,rep,name=containers,proto3" json:"containers,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"` // Non-empty when Docker is unavailable.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContainerListPayload) Reset() {
+	*x = ContainerListPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerListPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerListPayload) ProtoMessage() {}
+
+func (x *ContainerListPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerListPayload.ProtoReflect.Descriptor instead.
+func (*ContainerListPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ContainerListPayload) GetContainers() []*ContainerInfo {
+	if x != nil {
+		return x.Containers
+	}
+	return nil
+}
+
+func (x *ContainerListPayload) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+// Create or update a service monitor on the agent, keyed by monitor_id. Sent when a monitor is created
+// or changed (disabling it sends enabled = false), and for every enabled monitor on each reconnection
+// (the agent drops its checks when the stream ends).
 type ConfigureHealthCheckPayload struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	MonitorId          string                 `protobuf:"bytes,1,opt,name=monitor_id,json=monitorId,proto3" json:"monitor_id,omitempty"`
-	ServiceName        string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`
-	CheckType          string                 `protobuf:"bytes,3,opt,name=check_type,json=checkType,proto3" json:"check_type,omitempty"` // "process" | "tcp" | "http"
-	HttpUrl            string                 `protobuf:"bytes,4,opt,name=http_url,json=httpUrl,proto3" json:"http_url,omitempty"`
-	HttpExpectedStatus int32                  `protobuf:"varint,5,opt,name=http_expected_status,json=httpExpectedStatus,proto3" json:"http_expected_status,omitempty"`
-	TcpHost            string                 `protobuf:"bytes,6,opt,name=tcp_host,json=tcpHost,proto3" json:"tcp_host,omitempty"`
-	TcpPort            int32                  `protobuf:"varint,7,opt,name=tcp_port,json=tcpPort,proto3" json:"tcp_port,omitempty"`
+	ServiceName        string                 `protobuf:"bytes,2,opt,name=service_name,json=serviceName,proto3" json:"service_name,omitempty"`                         // For "process": the Docker container to check.
+	CheckType          string                 `protobuf:"bytes,3,opt,name=check_type,json=checkType,proto3" json:"check_type,omitempty"`                               // "process" (the container is running), "tcp" or "http".
+	HttpUrl            string                 `protobuf:"bytes,4,opt,name=http_url,json=httpUrl,proto3" json:"http_url,omitempty"`                                     // For "http".
+	HttpExpectedStatus int32                  `protobuf:"varint,5,opt,name=http_expected_status,json=httpExpectedStatus,proto3" json:"http_expected_status,omitempty"` // For "http".
+	TcpHost            string                 `protobuf:"bytes,6,opt,name=tcp_host,json=tcpHost,proto3" json:"tcp_host,omitempty"`                                     // For "tcp".
+	TcpPort            int32                  `protobuf:"varint,7,opt,name=tcp_port,json=tcpPort,proto3" json:"tcp_port,omitempty"`                                    // For "tcp".
 	IntervalSeconds    int32                  `protobuf:"varint,8,opt,name=interval_seconds,json=intervalSeconds,proto3" json:"interval_seconds,omitempty"`
-	FailureThreshold   int32                  `protobuf:"varint,9,opt,name=failure_threshold,json=failureThreshold,proto3" json:"failure_threshold,omitempty"`
+	FailureThreshold   int32                  `protobuf:"varint,9,opt,name=failure_threshold,json=failureThreshold,proto3" json:"failure_threshold,omitempty"` // Consecutive failures before the service is "down".
 	Enabled            bool                   `protobuf:"varint,10,opt,name=enabled,proto3" json:"enabled,omitempty"`
-	AutoHealConfig     string                 `protobuf:"bytes,11,opt,name=auto_heal_config,json=autoHealConfig,proto3" json:"auto_heal_config,omitempty"` // JSON string of AutoHealConfig
-	AutoHealState      string                 `protobuf:"bytes,12,opt,name=auto_heal_state,json=autoHealState,proto3" json:"auto_heal_state,omitempty"`    // JSON string of ServiceHealthState
+	AutoHealConfig     string                 `protobuf:"bytes,11,opt,name=auto_heal_config,json=autoHealConfig,proto3" json:"auto_heal_config,omitempty"` // JSON of the monitor's auto-heal configuration; empty when off.
+	AutoHealState      string                 `protobuf:"bytes,12,opt,name=auto_heal_state,json=autoHealState,proto3" json:"auto_heal_state,omitempty"`    // JSON of the last auto-heal state the API stored, to resume it.
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ConfigureHealthCheckPayload) Reset() {
 	*x = ConfigureHealthCheckPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[12]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1501,7 +1760,7 @@ func (x *ConfigureHealthCheckPayload) String() string {
 func (*ConfigureHealthCheckPayload) ProtoMessage() {}
 
 func (x *ConfigureHealthCheckPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[12]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1514,7 +1773,7 @@ func (x *ConfigureHealthCheckPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigureHealthCheckPayload.ProtoReflect.Descriptor instead.
 func (*ConfigureHealthCheckPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{12}
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ConfigureHealthCheckPayload) GetMonitorId() string {
@@ -1601,7 +1860,7 @@ func (x *ConfigureHealthCheckPayload) GetAutoHealState() string {
 	return ""
 }
 
-// Sent by the server to remove a health check from the agent.
+// Remove a service monitor from the agent. Sent when the monitor is deleted.
 type StopHealthCheckPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MonitorId     string                 `protobuf:"bytes,1,opt,name=monitor_id,json=monitorId,proto3" json:"monitor_id,omitempty"`
@@ -1611,7 +1870,7 @@ type StopHealthCheckPayload struct {
 
 func (x *StopHealthCheckPayload) Reset() {
 	*x = StopHealthCheckPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[13]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1623,7 +1882,7 @@ func (x *StopHealthCheckPayload) String() string {
 func (*StopHealthCheckPayload) ProtoMessage() {}
 
 func (x *StopHealthCheckPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[13]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1636,7 +1895,7 @@ func (x *StopHealthCheckPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopHealthCheckPayload.ProtoReflect.Descriptor instead.
 func (*StopHealthCheckPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{13}
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *StopHealthCheckPayload) GetMonitorId() string {
@@ -1646,22 +1905,23 @@ func (x *StopHealthCheckPayload) GetMonitorId() string {
 	return ""
 }
 
-// Sent by the agent after each health check execution.
+// Result of one health check run. The API stores it, updates the monitor's status and sends a
+// "service down" alert when the threshold is crossed.
 type HealthCheckResultPayload struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	MonitorId           string                 `protobuf:"bytes,1,opt,name=monitor_id,json=monitorId,proto3" json:"monitor_id,omitempty"`
-	Status              string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"` // "up" | "down"
+	Status              string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"` // "up" or "down".
 	LatencyMs           int32                  `protobuf:"varint,3,opt,name=latency_ms,json=latencyMs,proto3" json:"latency_ms,omitempty"`
-	Message             string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	Message             string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"` // Error or detail of the check.
 	ConsecutiveFailures int32                  `protobuf:"varint,5,opt,name=consecutive_failures,json=consecutiveFailures,proto3" json:"consecutive_failures,omitempty"`
-	AutoHealState       string                 `protobuf:"bytes,6,opt,name=auto_heal_state,json=autoHealState,proto3" json:"auto_heal_state,omitempty"` // JSON string of updated ServiceHealthState
+	AutoHealState       string                 `protobuf:"bytes,6,opt,name=auto_heal_state,json=autoHealState,proto3" json:"auto_heal_state,omitempty"` // JSON of the updated auto-heal state, stored by the API.
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
 
 func (x *HealthCheckResultPayload) Reset() {
 	*x = HealthCheckResultPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[14]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1673,7 +1933,7 @@ func (x *HealthCheckResultPayload) String() string {
 func (*HealthCheckResultPayload) ProtoMessage() {}
 
 func (x *HealthCheckResultPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[14]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1686,7 +1946,7 @@ func (x *HealthCheckResultPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthCheckResultPayload.ProtoReflect.Descriptor instead.
 func (*HealthCheckResultPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{14}
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *HealthCheckResultPayload) GetMonitorId() string {
@@ -1731,19 +1991,914 @@ func (x *HealthCheckResultPayload) GetAutoHealState() string {
 	return ""
 }
 
-// Sent by server to ask the agent to collect a pprof profile.
+// Collect, sanitize and analyze logs for POST /v1/log-diagnostics/collect.
+type CollectLogsPayload struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	RequestId         string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`                          // Diagnostic request ID (UUID); echoed in LogDiagnosticPayload.
+	Sources           []string               `protobuf:"bytes,2,rep,name=sources,proto3" json:"sources,omitempty"`                                               // systemd units, or "docker:<container>"; up to 5.
+	LinesPerSource    int32                  `protobuf:"varint,3,opt,name=lines_per_source,json=linesPerSource,proto3" json:"lines_per_source,omitempty"`        // Default 200; the agent caps it at 500.
+	IncludeContainers bool                   `protobuf:"varint,4,opt,name=include_containers,json=includeContainers,proto3" json:"include_containers,omitempty"` // Also collect every running container, up to 5 sources in total.
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *CollectLogsPayload) Reset() {
+	*x = CollectLogsPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CollectLogsPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CollectLogsPayload) ProtoMessage() {}
+
+func (x *CollectLogsPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CollectLogsPayload.ProtoReflect.Descriptor instead.
+func (*CollectLogsPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *CollectLogsPayload) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *CollectLogsPayload) GetSources() []string {
+	if x != nil {
+		return x.Sources
+	}
+	return nil
+}
+
+func (x *CollectLogsPayload) GetLinesPerSource() int32 {
+	if x != nil {
+		return x.LinesPerSource
+	}
+	return 0
+}
+
+func (x *CollectLogsPayload) GetIncludeContainers() bool {
+	if x != nil {
+		return x.IncludeContainers
+	}
+	return false
+}
+
+// The collected logs and the agent's own analysis. The API may replace the analysis with an AI one.
+type LogDiagnosticPayload struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	RequestId      string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`                // From CollectLogsPayload.
+	DiagnosticJson string                 `protobuf:"bytes,2,opt,name=diagnostic_json,json=diagnosticJson,proto3" json:"diagnostic_json,omitempty"` // JSON report: summary, system_health, issues...
+	Sources        []*LogSourceBundle     `protobuf:"bytes,3,rep,name=sources,proto3" json:"sources,omitempty"`                                     // Sanitized logs, one per source.
+	Error          string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`                                         // Non-empty if the collection failed.
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *LogDiagnosticPayload) Reset() {
+	*x = LogDiagnosticPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogDiagnosticPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogDiagnosticPayload) ProtoMessage() {}
+
+func (x *LogDiagnosticPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogDiagnosticPayload.ProtoReflect.Descriptor instead.
+func (*LogDiagnosticPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *LogDiagnosticPayload) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *LogDiagnosticPayload) GetDiagnosticJson() string {
+	if x != nil {
+		return x.DiagnosticJson
+	}
+	return ""
+}
+
+func (x *LogDiagnosticPayload) GetSources() []*LogSourceBundle {
+	if x != nil {
+		return x.Sources
+	}
+	return nil
+}
+
+func (x *LogDiagnosticPayload) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+// The logs of one source within a diagnostic.
+type LogSourceBundle struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`                  // As requested, e.g. "autohost-agent" or "docker:nginx".
+	RawLogs       string                 `protobuf:"bytes,2,opt,name=raw_logs,json=rawLogs,proto3" json:"raw_logs,omitempty"` // Sanitized log text, or "ERROR: ..." if the source could not be read.
+	LineCount     int32                  `protobuf:"varint,3,opt,name=line_count,json=lineCount,proto3" json:"line_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogSourceBundle) Reset() {
+	*x = LogSourceBundle{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogSourceBundle) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogSourceBundle) ProtoMessage() {}
+
+func (x *LogSourceBundle) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogSourceBundle.ProtoReflect.Descriptor instead.
+func (*LogSourceBundle) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *LogSourceBundle) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *LogSourceBundle) GetRawLogs() string {
+	if x != nil {
+		return x.RawLogs
+	}
+	return ""
+}
+
+func (x *LogSourceBundle) GetLineCount() int32 {
+	if x != nil {
+		return x.LineCount
+	}
+	return 0
+}
+
+// Ask for a network snapshot now, for GET /v1/node-network/{nodeId}. The API waits 3 s for the answer.
+type RequestNetworkStatsPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // Correlation ID; echoed in NetworkStatsPayload.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RequestNetworkStatsPayload) Reset() {
+	*x = RequestNetworkStatsPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RequestNetworkStatsPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RequestNetworkStatsPayload) ProtoMessage() {}
+
+func (x *RequestNetworkStatsPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RequestNetworkStatsPayload.ProtoReflect.Descriptor instead.
+func (*RequestNetworkStatsPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *RequestNetworkStatsPayload) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+// A network snapshot. The API stores it and returns it to the waiting request.
+type NetworkStatsPayload struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	RequestId string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // From RequestNetworkStatsPayload.
+	StatsJson string                 `protobuf:"bytes,2,opt,name=stats_json,json=statsJson,proto3" json:"stats_json,omitempty"` // JSON with interfaces, ports, peers, connections, requests and rps
+	// (same shape as POST /v1/agent/network-stats).
+	Error         string `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"` // Non-empty if the snapshot could not be taken.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NetworkStatsPayload) Reset() {
+	*x = NetworkStatsPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NetworkStatsPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NetworkStatsPayload) ProtoMessage() {}
+
+func (x *NetworkStatsPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NetworkStatsPayload.ProtoReflect.Descriptor instead.
+func (*NetworkStatsPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *NetworkStatsPayload) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *NetworkStatsPayload) GetStatsJson() string {
+	if x != nil {
+		return x.StatsJson
+	}
+	return ""
+}
+
+func (x *NetworkStatsPayload) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+// Open a PTY shell session.
+type StartTerminalPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"` // Session ID (UUID), used in every terminal message.
+	Cols          uint32                 `protobuf:"varint,2,opt,name=cols,proto3" json:"cols,omitempty"`                           // Initial columns, e.g. 80.
+	Rows          uint32                 `protobuf:"varint,3,opt,name=rows,proto3" json:"rows,omitempty"`                           // Initial rows, e.g. 24.
+	Shell         string                 `protobuf:"bytes,4,opt,name=shell,proto3" json:"shell,omitempty"`                          // Preferred shell, e.g. "/bin/bash"; empty lets the agent choose.
+	Cwd           string                 `protobuf:"bytes,5,opt,name=cwd,proto3" json:"cwd,omitempty"`                              // Initial working directory; empty for the default.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartTerminalPayload) Reset() {
+	*x = StartTerminalPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartTerminalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartTerminalPayload) ProtoMessage() {}
+
+func (x *StartTerminalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartTerminalPayload.ProtoReflect.Descriptor instead.
+func (*StartTerminalPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *StartTerminalPayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *StartTerminalPayload) GetCols() uint32 {
+	if x != nil {
+		return x.Cols
+	}
+	return 0
+}
+
+func (x *StartTerminalPayload) GetRows() uint32 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+func (x *StartTerminalPayload) GetShell() string {
+	if x != nil {
+		return x.Shell
+	}
+	return ""
+}
+
+func (x *StartTerminalPayload) GetCwd() string {
+	if x != nil {
+		return x.Cwd
+	}
+	return ""
+}
+
+// Keystrokes from the browser.
+type TerminalInputPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalInputPayload) Reset() {
+	*x = TerminalInputPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalInputPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalInputPayload) ProtoMessage() {}
+
+func (x *TerminalInputPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalInputPayload.ProtoReflect.Descriptor instead.
+func (*TerminalInputPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *TerminalInputPayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TerminalInputPayload) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// The browser terminal was resized.
+type TerminalResizePayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Cols          uint32                 `protobuf:"varint,2,opt,name=cols,proto3" json:"cols,omitempty"`
+	Rows          uint32                 `protobuf:"varint,3,opt,name=rows,proto3" json:"rows,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalResizePayload) Reset() {
+	*x = TerminalResizePayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalResizePayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalResizePayload) ProtoMessage() {}
+
+func (x *TerminalResizePayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalResizePayload.ProtoReflect.Descriptor instead.
+func (*TerminalResizePayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *TerminalResizePayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TerminalResizePayload) GetCols() uint32 {
+	if x != nil {
+		return x.Cols
+	}
+	return 0
+}
+
+func (x *TerminalResizePayload) GetRows() uint32 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+// Close the session (the user closed the terminal).
+type CloseTerminalPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloseTerminalPayload) Reset() {
+	*x = CloseTerminalPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloseTerminalPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloseTerminalPayload) ProtoMessage() {}
+
+func (x *CloseTerminalPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloseTerminalPayload.ProtoReflect.Descriptor instead.
+func (*CloseTerminalPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *CloseTerminalPayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+// PTY output (stdout and stderr) for the browser.
+type TerminalOutputPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalOutputPayload) Reset() {
+	*x = TerminalOutputPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalOutputPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalOutputPayload) ProtoMessage() {}
+
+func (x *TerminalOutputPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalOutputPayload.ProtoReflect.Descriptor instead.
+func (*TerminalOutputPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *TerminalOutputPayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TerminalOutputPayload) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// The shell exited or could not start. No more messages follow for this session.
+type TerminalClosedPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ExitCode      int32                  `protobuf:"varint,2,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"` // Non-empty when the session failed.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalClosedPayload) Reset() {
+	*x = TerminalClosedPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalClosedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalClosedPayload) ProtoMessage() {}
+
+func (x *TerminalClosedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalClosedPayload.ProtoReflect.Descriptor instead.
+func (*TerminalClosedPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *TerminalClosedPayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *TerminalClosedPayload) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *TerminalClosedPayload) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+// A file operation. Transfers (PUSH/PULL) move the bytes over HTTP to the API, not over the stream.
+type FileOperationRequestPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // Correlation ID (UUID); echoed in FileOperationResponsePayload.
+	OpType        FileOpType             `protobuf:"varint,2,opt,name=op_type,json=opType,proto3,enum=node_agent.v1.FileOpType" json:"op_type,omitempty"`
+	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`                                  // Relative path inside the shared folder.
+	TransferUrl   string                 `protobuf:"bytes,4,opt,name=transfer_url,json=transferUrl,proto3" json:"transfer_url,omitempty"` // For PUSH_TO_URL and PULL_FROM_URL: API URL to send to or read from.
+	AuthToken     string                 `protobuf:"bytes,5,opt,name=auth_token,json=authToken,proto3" json:"auth_token,omitempty"`       // For transfers: one-time token to present to transfer_url.
+	DestPath      string                 `protobuf:"bytes,6,opt,name=dest_path,json=destPath,proto3" json:"dest_path,omitempty"`          // For FILE_OP_RENAME: new relative path.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileOperationRequestPayload) Reset() {
+	*x = FileOperationRequestPayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileOperationRequestPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileOperationRequestPayload) ProtoMessage() {}
+
+func (x *FileOperationRequestPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileOperationRequestPayload.ProtoReflect.Descriptor instead.
+func (*FileOperationRequestPayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *FileOperationRequestPayload) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *FileOperationRequestPayload) GetOpType() FileOpType {
+	if x != nil {
+		return x.OpType
+	}
+	return FileOpType_FILE_OP_LIST
+}
+
+func (x *FileOperationRequestPayload) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *FileOperationRequestPayload) GetTransferUrl() string {
+	if x != nil {
+		return x.TransferUrl
+	}
+	return ""
+}
+
+func (x *FileOperationRequestPayload) GetAuthToken() string {
+	if x != nil {
+		return x.AuthToken
+	}
+	return ""
+}
+
+func (x *FileOperationRequestPayload) GetDestPath() string {
+	if x != nil {
+		return x.DestPath
+	}
+	return ""
+}
+
+// One entry of a directory listing.
+type FileEntryInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"` // Relative to the shared folder.
+	IsDir         bool                   `protobuf:"varint,3,opt,name=is_dir,json=isDir,proto3" json:"is_dir,omitempty"`
+	SizeBytes     int64                  `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	ModifiedAt    int64                  `protobuf:"varint,5,opt,name=modified_at,json=modifiedAt,proto3" json:"modified_at,omitempty"` // Unix time in seconds.
+	Mode          string                 `protobuf:"bytes,6,opt,name=mode,proto3" json:"mode,omitempty"`                                // e.g. "-rw-r--r--".
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileEntryInfo) Reset() {
+	*x = FileEntryInfo{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileEntryInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileEntryInfo) ProtoMessage() {}
+
+func (x *FileEntryInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileEntryInfo.ProtoReflect.Descriptor instead.
+func (*FileEntryInfo) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *FileEntryInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *FileEntryInfo) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *FileEntryInfo) GetIsDir() bool {
+	if x != nil {
+		return x.IsDir
+	}
+	return false
+}
+
+func (x *FileEntryInfo) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+func (x *FileEntryInfo) GetModifiedAt() int64 {
+	if x != nil {
+		return x.ModifiedAt
+	}
+	return 0
+}
+
+func (x *FileEntryInfo) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+// Result of a FileOperationRequestPayload.
+type FileOperationResponsePayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // From FileOperationRequestPayload.
+	Success       bool                   `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`
+	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`     // Non-empty when success is false.
+	Entries       []*FileEntryInfo       `protobuf:"bytes,4,rep,name=entries,proto3" json:"entries,omitempty"` // For FILE_OP_LIST.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FileOperationResponsePayload) Reset() {
+	*x = FileOperationResponsePayload{}
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FileOperationResponsePayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FileOperationResponsePayload) ProtoMessage() {}
+
+func (x *FileOperationResponsePayload) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FileOperationResponsePayload.ProtoReflect.Descriptor instead.
+func (*FileOperationResponsePayload) Descriptor() ([]byte, []int) {
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *FileOperationResponsePayload) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *FileOperationResponsePayload) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *FileOperationResponsePayload) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *FileOperationResponsePayload) GetEntries() []*FileEntryInfo {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+// Unused: the API never sends it and ignores ProfileDataPayload. Kept so old peers still parse.
 type RequestProfilePayload struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	RequestId       string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // correlation ID (UUID)
+	RequestId       string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // Correlation ID (UUID).
 	ProfileType     ProfileType            `protobuf:"varint,2,opt,name=profile_type,json=profileType,proto3,enum=node_agent.v1.ProfileType" json:"profile_type,omitempty"`
-	DurationSeconds int32                  `protobuf:"varint,3,opt,name=duration_seconds,json=durationSeconds,proto3" json:"duration_seconds,omitempty"` // only relevant for PROFILE_TYPE_CPU (0 → 30 s default)
+	DurationSeconds int32                  `protobuf:"varint,3,opt,name=duration_seconds,json=durationSeconds,proto3" json:"duration_seconds,omitempty"` // Only for PROFILE_TYPE_CPU (0 = 30 s).
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
 
 func (x *RequestProfilePayload) Reset() {
 	*x = RequestProfilePayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[15]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1755,7 +2910,7 @@ func (x *RequestProfilePayload) String() string {
 func (*RequestProfilePayload) ProtoMessage() {}
 
 func (x *RequestProfilePayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[15]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1768,7 +2923,7 @@ func (x *RequestProfilePayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestProfilePayload.ProtoReflect.Descriptor instead.
 func (*RequestProfilePayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{15}
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *RequestProfilePayload) GetRequestId() string {
@@ -1792,20 +2947,20 @@ func (x *RequestProfilePayload) GetDurationSeconds() int32 {
 	return 0
 }
 
-// Sent by agent to deliver the raw pprof bytes back to the server.
+// Unused: see RequestProfilePayload.
 type ProfileDataPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // matches RequestProfilePayload.request_id
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // From RequestProfilePayload.
 	ProfileType   ProfileType            `protobuf:"varint,2,opt,name=profile_type,json=profileType,proto3,enum=node_agent.v1.ProfileType" json:"profile_type,omitempty"`
-	Data          []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`   // raw pprof binary (pprof.WriteHeapProfile / StopCPUProfile output)
-	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"` // non-empty when collection failed
+	Data          []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`   // Raw pprof output.
+	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"` // Non-empty when collection failed.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ProfileDataPayload) Reset() {
 	*x = ProfileDataPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[16]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1817,7 +2972,7 @@ func (x *ProfileDataPayload) String() string {
 func (*ProfileDataPayload) ProtoMessage() {}
 
 func (x *ProfileDataPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[16]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1830,7 +2985,7 @@ func (x *ProfileDataPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProfileDataPayload.ProtoReflect.Descriptor instead.
 func (*ProfileDataPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{16}
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ProfileDataPayload) GetRequestId() string {
@@ -1861,234 +3016,7 @@ func (x *ProfileDataPayload) GetError() string {
 	return ""
 }
 
-// Sent by server to ask the agent to start streaming container state snapshots.
-type StreamContainersPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *StreamContainersPayload) Reset() {
-	*x = StreamContainersPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[17]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *StreamContainersPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*StreamContainersPayload) ProtoMessage() {}
-
-func (x *StreamContainersPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[17]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use StreamContainersPayload.ProtoReflect.Descriptor instead.
-func (*StreamContainersPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{17}
-}
-
-// Sent by server to ask the agent to stop streaming container state.
-type StopContainersPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *StopContainersPayload) Reset() {
-	*x = StopContainersPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[18]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *StopContainersPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*StopContainersPayload) ProtoMessage() {}
-
-func (x *StopContainersPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[18]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use StopContainersPayload.ProtoReflect.Descriptor instead.
-func (*StopContainersPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{18}
-}
-
-// One Docker container entry within a ContainerListPayload snapshot.
-type ContainerInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Image         string                 `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
-	State         string                 `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`                    // "running" | "exited" | "paused" | "restarting" | …
-	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`                  // human-readable, e.g. "Up 2 hours"
-	Cpu           string                 `protobuf:"bytes,6,opt,name=cpu,proto3" json:"cpu,omitempty"`                        // CPU usage percentage string (only for running containers)
-	Mem           string                 `protobuf:"bytes,7,opt,name=mem,proto3" json:"mem,omitempty"`                        // memory usage/limit string (only for running containers)
-	MemPerc       string                 `protobuf:"bytes,8,opt,name=mem_perc,json=memPerc,proto3" json:"mem_perc,omitempty"` // memory percentage string (only for running containers)
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ContainerInfo) Reset() {
-	*x = ContainerInfo{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[19]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ContainerInfo) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ContainerInfo) ProtoMessage() {}
-
-func (x *ContainerInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[19]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ContainerInfo.ProtoReflect.Descriptor instead.
-func (*ContainerInfo) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{19}
-}
-
-func (x *ContainerInfo) GetId() string {
-	if x != nil {
-		return x.Id
-	}
-	return ""
-}
-
-func (x *ContainerInfo) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
-func (x *ContainerInfo) GetImage() string {
-	if x != nil {
-		return x.Image
-	}
-	return ""
-}
-
-func (x *ContainerInfo) GetState() string {
-	if x != nil {
-		return x.State
-	}
-	return ""
-}
-
-func (x *ContainerInfo) GetStatus() string {
-	if x != nil {
-		return x.Status
-	}
-	return ""
-}
-
-func (x *ContainerInfo) GetCpu() string {
-	if x != nil {
-		return x.Cpu
-	}
-	return ""
-}
-
-func (x *ContainerInfo) GetMem() string {
-	if x != nil {
-		return x.Mem
-	}
-	return ""
-}
-
-func (x *ContainerInfo) GetMemPerc() string {
-	if x != nil {
-		return x.MemPerc
-	}
-	return ""
-}
-
-// Full container list snapshot sent by the agent whenever the list changes.
-type ContainerListPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Containers    []*ContainerInfo       `protobuf:"bytes,1,rep,name=containers,proto3" json:"containers,omitempty"`
-	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"` // non-empty when Docker is unavailable
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ContainerListPayload) Reset() {
-	*x = ContainerListPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[20]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ContainerListPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ContainerListPayload) ProtoMessage() {}
-
-func (x *ContainerListPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[20]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ContainerListPayload.ProtoReflect.Descriptor instead.
-func (*ContainerListPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{20}
-}
-
-func (x *ContainerListPayload) GetContainers() []*ContainerInfo {
-	if x != nil {
-		return x.Containers
-	}
-	return nil
-}
-
-func (x *ContainerListPayload) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
+// Same fields as MetricPayload. Legacy: current agents send MetricPayload on Connect instead.
 type MetricRequest struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	CpuUsagePercent    float32                `protobuf:"fixed32,1,opt,name=cpu_usage_percent,json=cpuUsagePercent,proto3" json:"cpu_usage_percent,omitempty"`
@@ -2108,7 +3036,7 @@ type MetricRequest struct {
 
 func (x *MetricRequest) Reset() {
 	*x = MetricRequest{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[21]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2120,7 +3048,7 @@ func (x *MetricRequest) String() string {
 func (*MetricRequest) ProtoMessage() {}
 
 func (x *MetricRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[21]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2133,7 +3061,7 @@ func (x *MetricRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricRequest.ProtoReflect.Descriptor instead.
 func (*MetricRequest) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{21}
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *MetricRequest) GetCpuUsagePercent() float32 {
@@ -2215,14 +3143,14 @@ func (x *MetricRequest) GetCpuTempCelsius() float32 {
 
 type MetricResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"` // Always true once authenticated.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MetricResponse) Reset() {
 	*x = MetricResponse{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[22]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2234,7 +3162,7 @@ func (x *MetricResponse) String() string {
 func (*MetricResponse) ProtoMessage() {}
 
 func (x *MetricResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[22]
+	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2247,7 +3175,7 @@ func (x *MetricResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricResponse.ProtoReflect.Descriptor instead.
 func (*MetricResponse) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{22}
+	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *MetricResponse) GetSuccess() bool {
@@ -2255,895 +3183,6 @@ func (x *MetricResponse) GetSuccess() bool {
 		return x.Success
 	}
 	return false
-}
-
-// Server asks agent to collect, sanitize and prepare a diagnostic log bundle.
-type CollectLogsPayload struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	RequestId         string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`                          // correlation UUID
-	Sources           []string               `protobuf:"bytes,2,rep,name=sources,proto3" json:"sources,omitempty"`                                               // e.g. ["autohost-agent", "docker:nginx"]
-	LinesPerSource    int32                  `protobuf:"varint,3,opt,name=lines_per_source,json=linesPerSource,proto3" json:"lines_per_source,omitempty"`        // max lines per source (default 200, max 500)
-	IncludeContainers bool                   `protobuf:"varint,4,opt,name=include_containers,json=includeContainers,proto3" json:"include_containers,omitempty"` // also collect all running container logs
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
-}
-
-func (x *CollectLogsPayload) Reset() {
-	*x = CollectLogsPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[23]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CollectLogsPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CollectLogsPayload) ProtoMessage() {}
-
-func (x *CollectLogsPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[23]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CollectLogsPayload.ProtoReflect.Descriptor instead.
-func (*CollectLogsPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{23}
-}
-
-func (x *CollectLogsPayload) GetRequestId() string {
-	if x != nil {
-		return x.RequestId
-	}
-	return ""
-}
-
-func (x *CollectLogsPayload) GetSources() []string {
-	if x != nil {
-		return x.Sources
-	}
-	return nil
-}
-
-func (x *CollectLogsPayload) GetLinesPerSource() int32 {
-	if x != nil {
-		return x.LinesPerSource
-	}
-	return 0
-}
-
-func (x *CollectLogsPayload) GetIncludeContainers() bool {
-	if x != nil {
-		return x.IncludeContainers
-	}
-	return false
-}
-
-// Agent returns sanitized logs + local pattern analysis to the server.
-type LogDiagnosticPayload struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	RequestId      string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`                // correlation UUID
-	DiagnosticJson string                 `protobuf:"bytes,2,opt,name=diagnostic_json,json=diagnosticJson,proto3" json:"diagnostic_json,omitempty"` // full JSON diagnostic report
-	Sources        []*LogSourceBundle     `protobuf:"bytes,3,rep,name=sources,proto3" json:"sources,omitempty"`                                     // raw sanitized log bundles
-	Error          string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`                                         // non-empty if collection failed
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
-}
-
-func (x *LogDiagnosticPayload) Reset() {
-	*x = LogDiagnosticPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[24]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *LogDiagnosticPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*LogDiagnosticPayload) ProtoMessage() {}
-
-func (x *LogDiagnosticPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[24]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use LogDiagnosticPayload.ProtoReflect.Descriptor instead.
-func (*LogDiagnosticPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{24}
-}
-
-func (x *LogDiagnosticPayload) GetRequestId() string {
-	if x != nil {
-		return x.RequestId
-	}
-	return ""
-}
-
-func (x *LogDiagnosticPayload) GetDiagnosticJson() string {
-	if x != nil {
-		return x.DiagnosticJson
-	}
-	return ""
-}
-
-func (x *LogDiagnosticPayload) GetSources() []*LogSourceBundle {
-	if x != nil {
-		return x.Sources
-	}
-	return nil
-}
-
-func (x *LogDiagnosticPayload) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
-// One log source within a diagnostic bundle.
-type LogSourceBundle struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Source        string                 `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`                  // e.g. "journalctl:autohost-agent" or "docker:nginx"
-	RawLogs       string                 `protobuf:"bytes,2,opt,name=raw_logs,json=rawLogs,proto3" json:"raw_logs,omitempty"` // sanitized log text
-	LineCount     int32                  `protobuf:"varint,3,opt,name=line_count,json=lineCount,proto3" json:"line_count,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *LogSourceBundle) Reset() {
-	*x = LogSourceBundle{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[25]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *LogSourceBundle) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*LogSourceBundle) ProtoMessage() {}
-
-func (x *LogSourceBundle) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[25]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use LogSourceBundle.ProtoReflect.Descriptor instead.
-func (*LogSourceBundle) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{25}
-}
-
-func (x *LogSourceBundle) GetSource() string {
-	if x != nil {
-		return x.Source
-	}
-	return ""
-}
-
-func (x *LogSourceBundle) GetRawLogs() string {
-	if x != nil {
-		return x.RawLogs
-	}
-	return ""
-}
-
-func (x *LogSourceBundle) GetLineCount() int32 {
-	if x != nil {
-		return x.LineCount
-	}
-	return 0
-}
-
-type RequestNetworkStatsPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *RequestNetworkStatsPayload) Reset() {
-	*x = RequestNetworkStatsPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[26]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *RequestNetworkStatsPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*RequestNetworkStatsPayload) ProtoMessage() {}
-
-func (x *RequestNetworkStatsPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[26]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use RequestNetworkStatsPayload.ProtoReflect.Descriptor instead.
-func (*RequestNetworkStatsPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{26}
-}
-
-func (x *RequestNetworkStatsPayload) GetRequestId() string {
-	if x != nil {
-		return x.RequestId
-	}
-	return ""
-}
-
-type NetworkStatsPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	StatsJson     string                 `protobuf:"bytes,2,opt,name=stats_json,json=statsJson,proto3" json:"stats_json,omitempty"` // JSON-encoded IngestPayload
-	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *NetworkStatsPayload) Reset() {
-	*x = NetworkStatsPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[27]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *NetworkStatsPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*NetworkStatsPayload) ProtoMessage() {}
-
-func (x *NetworkStatsPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[27]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use NetworkStatsPayload.ProtoReflect.Descriptor instead.
-func (*NetworkStatsPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{27}
-}
-
-func (x *NetworkStatsPayload) GetRequestId() string {
-	if x != nil {
-		return x.RequestId
-	}
-	return ""
-}
-
-func (x *NetworkStatsPayload) GetStatsJson() string {
-	if x != nil {
-		return x.StatsJson
-	}
-	return ""
-}
-
-func (x *NetworkStatsPayload) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
-// Server asks agent to spawn an interactive PTY shell session.
-type StartTerminalPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"` // UUID identifying this terminal session
-	Cols          uint32                 `protobuf:"varint,2,opt,name=cols,proto3" json:"cols,omitempty"`                           // initial terminal columns (e.g. 80 or 120)
-	Rows          uint32                 `protobuf:"varint,3,opt,name=rows,proto3" json:"rows,omitempty"`                           // initial terminal rows (e.g. 24 or 40)
-	Shell         string                 `protobuf:"bytes,4,opt,name=shell,proto3" json:"shell,omitempty"`                          // optional preferred shell (e.g. "/bin/bash"), empty = auto-detect
-	Cwd           string                 `protobuf:"bytes,5,opt,name=cwd,proto3" json:"cwd,omitempty"`                              // optional initial working directory
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *StartTerminalPayload) Reset() {
-	*x = StartTerminalPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[28]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *StartTerminalPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*StartTerminalPayload) ProtoMessage() {}
-
-func (x *StartTerminalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[28]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use StartTerminalPayload.ProtoReflect.Descriptor instead.
-func (*StartTerminalPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{28}
-}
-
-func (x *StartTerminalPayload) GetSessionId() string {
-	if x != nil {
-		return x.SessionId
-	}
-	return ""
-}
-
-func (x *StartTerminalPayload) GetCols() uint32 {
-	if x != nil {
-		return x.Cols
-	}
-	return 0
-}
-
-func (x *StartTerminalPayload) GetRows() uint32 {
-	if x != nil {
-		return x.Rows
-	}
-	return 0
-}
-
-func (x *StartTerminalPayload) GetShell() string {
-	if x != nil {
-		return x.Shell
-	}
-	return ""
-}
-
-func (x *StartTerminalPayload) GetCwd() string {
-	if x != nil {
-		return x.Cwd
-	}
-	return ""
-}
-
-// Server forwards raw stdin keystrokes from the browser to the agent PTY.
-type TerminalInputPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *TerminalInputPayload) Reset() {
-	*x = TerminalInputPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[29]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TerminalInputPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TerminalInputPayload) ProtoMessage() {}
-
-func (x *TerminalInputPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[29]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TerminalInputPayload.ProtoReflect.Descriptor instead.
-func (*TerminalInputPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{29}
-}
-
-func (x *TerminalInputPayload) GetSessionId() string {
-	if x != nil {
-		return x.SessionId
-	}
-	return ""
-}
-
-func (x *TerminalInputPayload) GetData() []byte {
-	if x != nil {
-		return x.Data
-	}
-	return nil
-}
-
-// Server notifies agent that the browser terminal window resized.
-type TerminalResizePayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Cols          uint32                 `protobuf:"varint,2,opt,name=cols,proto3" json:"cols,omitempty"`
-	Rows          uint32                 `protobuf:"varint,3,opt,name=rows,proto3" json:"rows,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *TerminalResizePayload) Reset() {
-	*x = TerminalResizePayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[30]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TerminalResizePayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TerminalResizePayload) ProtoMessage() {}
-
-func (x *TerminalResizePayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[30]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TerminalResizePayload.ProtoReflect.Descriptor instead.
-func (*TerminalResizePayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{30}
-}
-
-func (x *TerminalResizePayload) GetSessionId() string {
-	if x != nil {
-		return x.SessionId
-	}
-	return ""
-}
-
-func (x *TerminalResizePayload) GetCols() uint32 {
-	if x != nil {
-		return x.Cols
-	}
-	return 0
-}
-
-func (x *TerminalResizePayload) GetRows() uint32 {
-	if x != nil {
-		return x.Rows
-	}
-	return 0
-}
-
-// Server asks agent to terminate the PTY session.
-type CloseTerminalPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *CloseTerminalPayload) Reset() {
-	*x = CloseTerminalPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[31]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CloseTerminalPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CloseTerminalPayload) ProtoMessage() {}
-
-func (x *CloseTerminalPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[31]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CloseTerminalPayload.ProtoReflect.Descriptor instead.
-func (*CloseTerminalPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{31}
-}
-
-func (x *CloseTerminalPayload) GetSessionId() string {
-	if x != nil {
-		return x.SessionId
-	}
-	return ""
-}
-
-// Agent streams raw stdout/stderr bytes from the PTY back to the server.
-type TerminalOutputPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *TerminalOutputPayload) Reset() {
-	*x = TerminalOutputPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[32]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TerminalOutputPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TerminalOutputPayload) ProtoMessage() {}
-
-func (x *TerminalOutputPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[32]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TerminalOutputPayload.ProtoReflect.Descriptor instead.
-func (*TerminalOutputPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{32}
-}
-
-func (x *TerminalOutputPayload) GetSessionId() string {
-	if x != nil {
-		return x.SessionId
-	}
-	return ""
-}
-
-func (x *TerminalOutputPayload) GetData() []byte {
-	if x != nil {
-		return x.Data
-	}
-	return nil
-}
-
-// Agent notifies server that the PTY process exited or failed to start.
-type TerminalClosedPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	ExitCode      int32                  `protobuf:"varint,2,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
-	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *TerminalClosedPayload) Reset() {
-	*x = TerminalClosedPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[33]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TerminalClosedPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TerminalClosedPayload) ProtoMessage() {}
-
-func (x *TerminalClosedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[33]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TerminalClosedPayload.ProtoReflect.Descriptor instead.
-func (*TerminalClosedPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{33}
-}
-
-func (x *TerminalClosedPayload) GetSessionId() string {
-	if x != nil {
-		return x.SessionId
-	}
-	return ""
-}
-
-func (x *TerminalClosedPayload) GetExitCode() int32 {
-	if x != nil {
-		return x.ExitCode
-	}
-	return 0
-}
-
-func (x *TerminalClosedPayload) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
-type FileOperationRequestPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // Correlation UUID
-	OpType        FileOpType             `protobuf:"varint,2,opt,name=op_type,json=opType,proto3,enum=node_agent.v1.FileOpType" json:"op_type,omitempty"`
-	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`                                  // Relative path inside node's shared directory
-	TransferUrl   string                 `protobuf:"bytes,4,opt,name=transfer_url,json=transferUrl,proto3" json:"transfer_url,omitempty"` // Used for PUSH_TO_URL and PULL_FROM_URL
-	AuthToken     string                 `protobuf:"bytes,5,opt,name=auth_token,json=authToken,proto3" json:"auth_token,omitempty"`       // One-time transfer token
-	DestPath      string                 `protobuf:"bytes,6,opt,name=dest_path,json=destPath,proto3" json:"dest_path,omitempty"`          // Destination relative path for FILE_OP_RENAME
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FileOperationRequestPayload) Reset() {
-	*x = FileOperationRequestPayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[34]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FileOperationRequestPayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FileOperationRequestPayload) ProtoMessage() {}
-
-func (x *FileOperationRequestPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[34]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FileOperationRequestPayload.ProtoReflect.Descriptor instead.
-func (*FileOperationRequestPayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{34}
-}
-
-func (x *FileOperationRequestPayload) GetRequestId() string {
-	if x != nil {
-		return x.RequestId
-	}
-	return ""
-}
-
-func (x *FileOperationRequestPayload) GetOpType() FileOpType {
-	if x != nil {
-		return x.OpType
-	}
-	return FileOpType_FILE_OP_LIST
-}
-
-func (x *FileOperationRequestPayload) GetPath() string {
-	if x != nil {
-		return x.Path
-	}
-	return ""
-}
-
-func (x *FileOperationRequestPayload) GetTransferUrl() string {
-	if x != nil {
-		return x.TransferUrl
-	}
-	return ""
-}
-
-func (x *FileOperationRequestPayload) GetAuthToken() string {
-	if x != nil {
-		return x.AuthToken
-	}
-	return ""
-}
-
-func (x *FileOperationRequestPayload) GetDestPath() string {
-	if x != nil {
-		return x.DestPath
-	}
-	return ""
-}
-
-type FileEntryInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	IsDir         bool                   `protobuf:"varint,3,opt,name=is_dir,json=isDir,proto3" json:"is_dir,omitempty"`
-	SizeBytes     int64                  `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
-	ModifiedAt    int64                  `protobuf:"varint,5,opt,name=modified_at,json=modifiedAt,proto3" json:"modified_at,omitempty"` // Unix timestamp (seconds)
-	Mode          string                 `protobuf:"bytes,6,opt,name=mode,proto3" json:"mode,omitempty"`                                // e.g. "-rw-r--r--"
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FileEntryInfo) Reset() {
-	*x = FileEntryInfo{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[35]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FileEntryInfo) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FileEntryInfo) ProtoMessage() {}
-
-func (x *FileEntryInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[35]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FileEntryInfo.ProtoReflect.Descriptor instead.
-func (*FileEntryInfo) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{35}
-}
-
-func (x *FileEntryInfo) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
-func (x *FileEntryInfo) GetPath() string {
-	if x != nil {
-		return x.Path
-	}
-	return ""
-}
-
-func (x *FileEntryInfo) GetIsDir() bool {
-	if x != nil {
-		return x.IsDir
-	}
-	return false
-}
-
-func (x *FileEntryInfo) GetSizeBytes() int64 {
-	if x != nil {
-		return x.SizeBytes
-	}
-	return 0
-}
-
-func (x *FileEntryInfo) GetModifiedAt() int64 {
-	if x != nil {
-		return x.ModifiedAt
-	}
-	return 0
-}
-
-func (x *FileEntryInfo) GetMode() string {
-	if x != nil {
-		return x.Mode
-	}
-	return ""
-}
-
-type FileOperationResponsePayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	Success       bool                   `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`
-	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
-	Entries       []*FileEntryInfo       `protobuf:"bytes,4,rep,name=entries,proto3" json:"entries,omitempty"` // Populated for FILE_OP_LIST
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FileOperationResponsePayload) Reset() {
-	*x = FileOperationResponsePayload{}
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[36]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FileOperationResponsePayload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FileOperationResponsePayload) ProtoMessage() {}
-
-func (x *FileOperationResponsePayload) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_node_agent_v1_node_agent_proto_msgTypes[36]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FileOperationResponsePayload.ProtoReflect.Descriptor instead.
-func (*FileOperationResponsePayload) Descriptor() ([]byte, []int) {
-	return file_proto_node_agent_v1_node_agent_proto_rawDescGZIP(), []int{36}
-}
-
-func (x *FileOperationResponsePayload) GetRequestId() string {
-	if x != nil {
-		return x.RequestId
-	}
-	return ""
-}
-
-func (x *FileOperationResponsePayload) GetSuccess() bool {
-	if x != nil {
-		return x.Success
-	}
-	return false
-}
-
-func (x *FileOperationResponsePayload) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
-func (x *FileOperationResponsePayload) GetEntries() []*FileEntryInfo {
-	if x != nil {
-		return x.Entries
-	}
-	return nil
 }
 
 var File_proto_node_agent_v1_node_agent_proto protoreflect.FileDescriptor
@@ -3178,32 +3217,7 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x0fterminal_output\x18\v \x01(\v2$.node_agent.v1.TerminalOutputPayloadH\x00R\x0eterminalOutput\x12O\n" +
 	"\x0fterminal_closed\x18\f \x01(\v2$.node_agent.v1.TerminalClosedPayloadH\x00R\x0eterminalClosed\x12W\n" +
 	"\x10file_op_response\x18\r \x01(\v2+.node_agent.v1.FileOperationResponsePayloadH\x00R\x0efileOpResponseB\t\n" +
-	"\apayload\"\x94\x03\n" +
-	"\x15HypervisorInfoPayload\x12\x18\n" +
-	"\acapable\x18\x01 \x01(\bR\acapable\x12#\n" +
-	"\rkvm_available\x18\x02 \x01(\bR\fkvmAvailable\x12+\n" +
-	"\x11libvirt_available\x18\x03 \x01(\bR\x10libvirtAvailable\x12'\n" +
-	"\x0flibvirt_version\x18\x04 \x01(\tR\x0elibvirtVersion\x12\x16\n" +
-	"\x06reason\x18\x05 \x01(\tR\x06reason\x12!\n" +
-	"\fnetwork_name\x18\x06 \x01(\tR\vnetworkName\x12\x1b\n" +
-	"\tcpu_cores\x18\a \x01(\rR\bcpuCores\x12&\n" +
-	"\x0fram_total_bytes\x18\b \x01(\x04R\rramTotalBytes\x12.\n" +
-	"\x13storage_total_bytes\x18\t \x01(\x04R\x11storageTotalBytes\x126\n" +
-	"\x17storage_available_bytes\x18\n" +
-	" \x01(\x04R\x15storageAvailableBytes\"\xe8\x03\n" +
-	"\rMetricPayload\x12*\n" +
-	"\x11cpu_usage_percent\x18\x01 \x01(\x02R\x0fcpuUsagePercent\x12&\n" +
-	"\x0fram_total_bytes\x18\x02 \x01(\x04R\rramTotalBytes\x12$\n" +
-	"\x0eram_used_bytes\x18\x03 \x01(\x04R\framUsedBytes\x12.\n" +
-	"\x13ram_available_bytes\x18\x04 \x01(\x04R\x11ramAvailableBytes\x12*\n" +
-	"\x11ram_usage_percent\x18\x05 \x01(\x02R\x0framUsagePercent\x12(\n" +
-	"\x10disk_total_bytes\x18\x06 \x01(\x04R\x0ediskTotalBytes\x12&\n" +
-	"\x0fdisk_used_bytes\x18\a \x01(\x04R\rdiskUsedBytes\x120\n" +
-	"\x14disk_available_bytes\x18\b \x01(\x04R\x12diskAvailableBytes\x12,\n" +
-	"\x12disk_usage_percent\x18\t \x01(\x02R\x10diskUsagePercent\x12%\n" +
-	"\x0euptime_seconds\x18\n" +
-	" \x01(\x03R\ruptimeSeconds\x12(\n" +
-	"\x10cpu_temp_celsius\x18\v \x01(\x02R\x0ecpuTempCelsius\"\xcf\t\n" +
+	"\apayload\"\xcf\t\n" +
 	"\rServerMessage\x12C\n" +
 	"\vexecute_job\x18\x01 \x01(\v2 .node_agent.v1.ExecuteJobPayloadH\x00R\n" +
 	"executeJob\x12C\n" +
@@ -3223,19 +3237,44 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x0fterminal_resize\x18\r \x01(\v2$.node_agent.v1.TerminalResizePayloadH\x00R\x0eterminalResize\x12L\n" +
 	"\x0eclose_terminal\x18\x0e \x01(\v2#.node_agent.v1.CloseTerminalPayloadH\x00R\rcloseTerminal\x12T\n" +
 	"\x0ffile_op_request\x18\x0f \x01(\v2*.node_agent.v1.FileOperationRequestPayloadH\x00R\rfileOpRequestB\t\n" +
-	"\apayload\"\x89\x01\n" +
-	"\x10JobResultPayload\x12\x15\n" +
-	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x120\n" +
-	"\x06status\x18\x02 \x01(\x0e2\x18.node_agent.v1.JobStatusR\x06status\x12\x16\n" +
-	"\x06output\x18\x03 \x01(\tR\x06output\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"+\n" +
+	"\apayload\"\x94\x03\n" +
+	"\x15HypervisorInfoPayload\x12\x18\n" +
+	"\acapable\x18\x01 \x01(\bR\acapable\x12#\n" +
+	"\rkvm_available\x18\x02 \x01(\bR\fkvmAvailable\x12+\n" +
+	"\x11libvirt_available\x18\x03 \x01(\bR\x10libvirtAvailable\x12'\n" +
+	"\x0flibvirt_version\x18\x04 \x01(\tR\x0elibvirtVersion\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\x12!\n" +
+	"\fnetwork_name\x18\x06 \x01(\tR\vnetworkName\x12\x1b\n" +
+	"\tcpu_cores\x18\a \x01(\rR\bcpuCores\x12&\n" +
+	"\x0fram_total_bytes\x18\b \x01(\x04R\rramTotalBytes\x12.\n" +
+	"\x13storage_total_bytes\x18\t \x01(\x04R\x11storageTotalBytes\x126\n" +
+	"\x17storage_available_bytes\x18\n" +
+	" \x01(\x04R\x15storageAvailableBytes\"+\n" +
 	"\x10HeartbeatPayload\x12\x17\n" +
-	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"\xa4\x01\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"\xe8\x03\n" +
+	"\rMetricPayload\x12*\n" +
+	"\x11cpu_usage_percent\x18\x01 \x01(\x02R\x0fcpuUsagePercent\x12&\n" +
+	"\x0fram_total_bytes\x18\x02 \x01(\x04R\rramTotalBytes\x12$\n" +
+	"\x0eram_used_bytes\x18\x03 \x01(\x04R\framUsedBytes\x12.\n" +
+	"\x13ram_available_bytes\x18\x04 \x01(\x04R\x11ramAvailableBytes\x12*\n" +
+	"\x11ram_usage_percent\x18\x05 \x01(\x02R\x0framUsagePercent\x12(\n" +
+	"\x10disk_total_bytes\x18\x06 \x01(\x04R\x0ediskTotalBytes\x12&\n" +
+	"\x0fdisk_used_bytes\x18\a \x01(\x04R\rdiskUsedBytes\x120\n" +
+	"\x14disk_available_bytes\x18\b \x01(\x04R\x12diskAvailableBytes\x12,\n" +
+	"\x12disk_usage_percent\x18\t \x01(\x02R\x10diskUsagePercent\x12%\n" +
+	"\x0euptime_seconds\x18\n" +
+	" \x01(\x03R\ruptimeSeconds\x12(\n" +
+	"\x10cpu_temp_celsius\x18\v \x01(\x02R\x0ecpuTempCelsius\"\xa4\x01\n" +
 	"\x11ExecuteJobPayload\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x12!\n" +
 	"\fcommand_name\x18\x02 \x01(\tR\vcommandName\x12=\n" +
 	"\fcommand_type\x18\x03 \x01(\x0e2\x1a.node_agent.v1.CommandTypeR\vcommandType\x12\x16\n" +
-	"\x06params\x18\x04 \x01(\tR\x06params\"=\n" +
+	"\x06params\x18\x04 \x01(\tR\x06params\"\x89\x01\n" +
+	"\x10JobResultPayload\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\x120\n" +
+	"\x06status\x18\x02 \x01(\x0e2\x18.node_agent.v1.JobStatusR\x06status\x12\x16\n" +
+	"\x06output\x18\x03 \x01(\tR\x06output\x12\x14\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"=\n" +
 	"\x11StreamLogsPayload\x12\x12\n" +
 	"\x04unit\x18\x01 \x01(\tR\x04unit\x12\x14\n" +
 	"\x05lines\x18\x02 \x01(\x05R\x05lines\"\x11\n" +
@@ -3243,7 +3282,23 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"\x0fLogEntryPayload\x12!\n" +
 	"\ftimestamp_us\x18\x01 \x01(\x03R\vtimestampUs\x12\x12\n" +
 	"\x04unit\x18\x02 \x01(\tR\x04unit\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"\xc5\x03\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\x19\n" +
+	"\x17StreamContainersPayload\"\x17\n" +
+	"\x15StopContainersPayload\"\xb6\x01\n" +
+	"\rContainerInfo\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
+	"\x05image\x18\x03 \x01(\tR\x05image\x12\x14\n" +
+	"\x05state\x18\x04 \x01(\tR\x05state\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\x12\x10\n" +
+	"\x03cpu\x18\x06 \x01(\tR\x03cpu\x12\x10\n" +
+	"\x03mem\x18\a \x01(\tR\x03mem\x12\x19\n" +
+	"\bmem_perc\x18\b \x01(\tR\amemPerc\"j\n" +
+	"\x14ContainerListPayload\x12<\n" +
+	"\n" +
+	"containers\x18\x01 \x03(\v2\x1c.node_agent.v1.ContainerInfoR\n" +
+	"containers\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xc5\x03\n" +
 	"\x1bConfigureHealthCheckPayload\x12\x1d\n" +
 	"\n" +
 	"monitor_id\x18\x01 \x01(\tR\tmonitorId\x12!\n" +
@@ -3271,49 +3326,7 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"latency_ms\x18\x03 \x01(\x05R\tlatencyMs\x12\x18\n" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x121\n" +
 	"\x14consecutive_failures\x18\x05 \x01(\x05R\x13consecutiveFailures\x12&\n" +
-	"\x0fauto_heal_state\x18\x06 \x01(\tR\rautoHealState\"\xa0\x01\n" +
-	"\x15RequestProfilePayload\x12\x1d\n" +
-	"\n" +
-	"request_id\x18\x01 \x01(\tR\trequestId\x12=\n" +
-	"\fprofile_type\x18\x02 \x01(\x0e2\x1a.node_agent.v1.ProfileTypeR\vprofileType\x12)\n" +
-	"\x10duration_seconds\x18\x03 \x01(\x05R\x0fdurationSeconds\"\x9c\x01\n" +
-	"\x12ProfileDataPayload\x12\x1d\n" +
-	"\n" +
-	"request_id\x18\x01 \x01(\tR\trequestId\x12=\n" +
-	"\fprofile_type\x18\x02 \x01(\x0e2\x1a.node_agent.v1.ProfileTypeR\vprofileType\x12\x12\n" +
-	"\x04data\x18\x03 \x01(\fR\x04data\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\x19\n" +
-	"\x17StreamContainersPayload\"\x17\n" +
-	"\x15StopContainersPayload\"\xb6\x01\n" +
-	"\rContainerInfo\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
-	"\x05image\x18\x03 \x01(\tR\x05image\x12\x14\n" +
-	"\x05state\x18\x04 \x01(\tR\x05state\x12\x16\n" +
-	"\x06status\x18\x05 \x01(\tR\x06status\x12\x10\n" +
-	"\x03cpu\x18\x06 \x01(\tR\x03cpu\x12\x10\n" +
-	"\x03mem\x18\a \x01(\tR\x03mem\x12\x19\n" +
-	"\bmem_perc\x18\b \x01(\tR\amemPerc\"j\n" +
-	"\x14ContainerListPayload\x12<\n" +
-	"\n" +
-	"containers\x18\x01 \x03(\v2\x1c.node_agent.v1.ContainerInfoR\n" +
-	"containers\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"\xe8\x03\n" +
-	"\rMetricRequest\x12*\n" +
-	"\x11cpu_usage_percent\x18\x01 \x01(\x02R\x0fcpuUsagePercent\x12&\n" +
-	"\x0fram_total_bytes\x18\x02 \x01(\x04R\rramTotalBytes\x12$\n" +
-	"\x0eram_used_bytes\x18\x03 \x01(\x04R\framUsedBytes\x12.\n" +
-	"\x13ram_available_bytes\x18\x04 \x01(\x04R\x11ramAvailableBytes\x12*\n" +
-	"\x11ram_usage_percent\x18\x05 \x01(\x02R\x0framUsagePercent\x12(\n" +
-	"\x10disk_total_bytes\x18\x06 \x01(\x04R\x0ediskTotalBytes\x12&\n" +
-	"\x0fdisk_used_bytes\x18\a \x01(\x04R\rdiskUsedBytes\x120\n" +
-	"\x14disk_available_bytes\x18\b \x01(\x04R\x12diskAvailableBytes\x12,\n" +
-	"\x12disk_usage_percent\x18\t \x01(\x02R\x10diskUsagePercent\x12%\n" +
-	"\x0euptime_seconds\x18\n" +
-	" \x01(\x03R\ruptimeSeconds\x12(\n" +
-	"\x10cpu_temp_celsius\x18\v \x01(\x02R\x0ecpuTempCelsius\"*\n" +
-	"\x0eMetricResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\"\xa6\x01\n" +
+	"\x0fauto_heal_state\x18\x06 \x01(\tR\rautoHealState\"\xa6\x01\n" +
 	"\x12CollectLogsPayload\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
@@ -3391,7 +3404,33 @@ const file_proto_node_agent_v1_node_agent_proto_rawDesc = "" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\x126\n" +
-	"\aentries\x18\x04 \x03(\v2\x1c.node_agent.v1.FileEntryInfoR\aentries*v\n" +
+	"\aentries\x18\x04 \x03(\v2\x1c.node_agent.v1.FileEntryInfoR\aentries\"\xa0\x01\n" +
+	"\x15RequestProfilePayload\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12=\n" +
+	"\fprofile_type\x18\x02 \x01(\x0e2\x1a.node_agent.v1.ProfileTypeR\vprofileType\x12)\n" +
+	"\x10duration_seconds\x18\x03 \x01(\x05R\x0fdurationSeconds\"\x9c\x01\n" +
+	"\x12ProfileDataPayload\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12=\n" +
+	"\fprofile_type\x18\x02 \x01(\x0e2\x1a.node_agent.v1.ProfileTypeR\vprofileType\x12\x12\n" +
+	"\x04data\x18\x03 \x01(\fR\x04data\x12\x14\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\xe8\x03\n" +
+	"\rMetricRequest\x12*\n" +
+	"\x11cpu_usage_percent\x18\x01 \x01(\x02R\x0fcpuUsagePercent\x12&\n" +
+	"\x0fram_total_bytes\x18\x02 \x01(\x04R\rramTotalBytes\x12$\n" +
+	"\x0eram_used_bytes\x18\x03 \x01(\x04R\framUsedBytes\x12.\n" +
+	"\x13ram_available_bytes\x18\x04 \x01(\x04R\x11ramAvailableBytes\x12*\n" +
+	"\x11ram_usage_percent\x18\x05 \x01(\x02R\x0framUsagePercent\x12(\n" +
+	"\x10disk_total_bytes\x18\x06 \x01(\x04R\x0ediskTotalBytes\x12&\n" +
+	"\x0fdisk_used_bytes\x18\a \x01(\x04R\rdiskUsedBytes\x120\n" +
+	"\x14disk_available_bytes\x18\b \x01(\x04R\x12diskAvailableBytes\x12,\n" +
+	"\x12disk_usage_percent\x18\t \x01(\x02R\x10diskUsagePercent\x12%\n" +
+	"\x0euptime_seconds\x18\n" +
+	" \x01(\x03R\ruptimeSeconds\x12(\n" +
+	"\x10cpu_temp_celsius\x18\v \x01(\x02R\x0ecpuTempCelsius\"*\n" +
+	"\x0eMetricResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess*v\n" +
 	"\vCommandType\x12\x18\n" +
 	"\x14COMMAND_TYPE_DEFAULT\x10\x00\x12\x17\n" +
 	"\x13COMMAND_TYPE_CUSTOM\x10\x01\x12\x1c\n" +
@@ -3439,85 +3478,85 @@ var file_proto_node_agent_v1_node_agent_proto_goTypes = []any{
 	(*RegisterCommandRequest)(nil),       // 4: node_agent.v1.RegisterCommandRequest
 	(*RegisterCommandsResponse)(nil),     // 5: node_agent.v1.RegisterCommandsResponse
 	(*NodeMessage)(nil),                  // 6: node_agent.v1.NodeMessage
-	(*HypervisorInfoPayload)(nil),        // 7: node_agent.v1.HypervisorInfoPayload
-	(*MetricPayload)(nil),                // 8: node_agent.v1.MetricPayload
-	(*ServerMessage)(nil),                // 9: node_agent.v1.ServerMessage
-	(*JobResultPayload)(nil),             // 10: node_agent.v1.JobResultPayload
-	(*HeartbeatPayload)(nil),             // 11: node_agent.v1.HeartbeatPayload
-	(*ExecuteJobPayload)(nil),            // 12: node_agent.v1.ExecuteJobPayload
+	(*ServerMessage)(nil),                // 7: node_agent.v1.ServerMessage
+	(*HypervisorInfoPayload)(nil),        // 8: node_agent.v1.HypervisorInfoPayload
+	(*HeartbeatPayload)(nil),             // 9: node_agent.v1.HeartbeatPayload
+	(*MetricPayload)(nil),                // 10: node_agent.v1.MetricPayload
+	(*ExecuteJobPayload)(nil),            // 11: node_agent.v1.ExecuteJobPayload
+	(*JobResultPayload)(nil),             // 12: node_agent.v1.JobResultPayload
 	(*StreamLogsPayload)(nil),            // 13: node_agent.v1.StreamLogsPayload
 	(*StopLogsPayload)(nil),              // 14: node_agent.v1.StopLogsPayload
 	(*LogEntryPayload)(nil),              // 15: node_agent.v1.LogEntryPayload
-	(*ConfigureHealthCheckPayload)(nil),  // 16: node_agent.v1.ConfigureHealthCheckPayload
-	(*StopHealthCheckPayload)(nil),       // 17: node_agent.v1.StopHealthCheckPayload
-	(*HealthCheckResultPayload)(nil),     // 18: node_agent.v1.HealthCheckResultPayload
-	(*RequestProfilePayload)(nil),        // 19: node_agent.v1.RequestProfilePayload
-	(*ProfileDataPayload)(nil),           // 20: node_agent.v1.ProfileDataPayload
-	(*StreamContainersPayload)(nil),      // 21: node_agent.v1.StreamContainersPayload
-	(*StopContainersPayload)(nil),        // 22: node_agent.v1.StopContainersPayload
-	(*ContainerInfo)(nil),                // 23: node_agent.v1.ContainerInfo
-	(*ContainerListPayload)(nil),         // 24: node_agent.v1.ContainerListPayload
-	(*MetricRequest)(nil),                // 25: node_agent.v1.MetricRequest
-	(*MetricResponse)(nil),               // 26: node_agent.v1.MetricResponse
-	(*CollectLogsPayload)(nil),           // 27: node_agent.v1.CollectLogsPayload
-	(*LogDiagnosticPayload)(nil),         // 28: node_agent.v1.LogDiagnosticPayload
-	(*LogSourceBundle)(nil),              // 29: node_agent.v1.LogSourceBundle
-	(*RequestNetworkStatsPayload)(nil),   // 30: node_agent.v1.RequestNetworkStatsPayload
-	(*NetworkStatsPayload)(nil),          // 31: node_agent.v1.NetworkStatsPayload
-	(*StartTerminalPayload)(nil),         // 32: node_agent.v1.StartTerminalPayload
-	(*TerminalInputPayload)(nil),         // 33: node_agent.v1.TerminalInputPayload
-	(*TerminalResizePayload)(nil),        // 34: node_agent.v1.TerminalResizePayload
-	(*CloseTerminalPayload)(nil),         // 35: node_agent.v1.CloseTerminalPayload
-	(*TerminalOutputPayload)(nil),        // 36: node_agent.v1.TerminalOutputPayload
-	(*TerminalClosedPayload)(nil),        // 37: node_agent.v1.TerminalClosedPayload
-	(*FileOperationRequestPayload)(nil),  // 38: node_agent.v1.FileOperationRequestPayload
-	(*FileEntryInfo)(nil),                // 39: node_agent.v1.FileEntryInfo
-	(*FileOperationResponsePayload)(nil), // 40: node_agent.v1.FileOperationResponsePayload
+	(*StreamContainersPayload)(nil),      // 16: node_agent.v1.StreamContainersPayload
+	(*StopContainersPayload)(nil),        // 17: node_agent.v1.StopContainersPayload
+	(*ContainerInfo)(nil),                // 18: node_agent.v1.ContainerInfo
+	(*ContainerListPayload)(nil),         // 19: node_agent.v1.ContainerListPayload
+	(*ConfigureHealthCheckPayload)(nil),  // 20: node_agent.v1.ConfigureHealthCheckPayload
+	(*StopHealthCheckPayload)(nil),       // 21: node_agent.v1.StopHealthCheckPayload
+	(*HealthCheckResultPayload)(nil),     // 22: node_agent.v1.HealthCheckResultPayload
+	(*CollectLogsPayload)(nil),           // 23: node_agent.v1.CollectLogsPayload
+	(*LogDiagnosticPayload)(nil),         // 24: node_agent.v1.LogDiagnosticPayload
+	(*LogSourceBundle)(nil),              // 25: node_agent.v1.LogSourceBundle
+	(*RequestNetworkStatsPayload)(nil),   // 26: node_agent.v1.RequestNetworkStatsPayload
+	(*NetworkStatsPayload)(nil),          // 27: node_agent.v1.NetworkStatsPayload
+	(*StartTerminalPayload)(nil),         // 28: node_agent.v1.StartTerminalPayload
+	(*TerminalInputPayload)(nil),         // 29: node_agent.v1.TerminalInputPayload
+	(*TerminalResizePayload)(nil),        // 30: node_agent.v1.TerminalResizePayload
+	(*CloseTerminalPayload)(nil),         // 31: node_agent.v1.CloseTerminalPayload
+	(*TerminalOutputPayload)(nil),        // 32: node_agent.v1.TerminalOutputPayload
+	(*TerminalClosedPayload)(nil),        // 33: node_agent.v1.TerminalClosedPayload
+	(*FileOperationRequestPayload)(nil),  // 34: node_agent.v1.FileOperationRequestPayload
+	(*FileEntryInfo)(nil),                // 35: node_agent.v1.FileEntryInfo
+	(*FileOperationResponsePayload)(nil), // 36: node_agent.v1.FileOperationResponsePayload
+	(*RequestProfilePayload)(nil),        // 37: node_agent.v1.RequestProfilePayload
+	(*ProfileDataPayload)(nil),           // 38: node_agent.v1.ProfileDataPayload
+	(*MetricRequest)(nil),                // 39: node_agent.v1.MetricRequest
+	(*MetricResponse)(nil),               // 40: node_agent.v1.MetricResponse
 }
 var file_proto_node_agent_v1_node_agent_proto_depIdxs = []int32{
 	0,  // 0: node_agent.v1.RegisterCommandRequest.type:type_name -> node_agent.v1.CommandType
-	10, // 1: node_agent.v1.NodeMessage.job_result:type_name -> node_agent.v1.JobResultPayload
-	11, // 2: node_agent.v1.NodeMessage.heartbeat:type_name -> node_agent.v1.HeartbeatPayload
+	12, // 1: node_agent.v1.NodeMessage.job_result:type_name -> node_agent.v1.JobResultPayload
+	9,  // 2: node_agent.v1.NodeMessage.heartbeat:type_name -> node_agent.v1.HeartbeatPayload
 	15, // 3: node_agent.v1.NodeMessage.log_entry:type_name -> node_agent.v1.LogEntryPayload
-	8,  // 4: node_agent.v1.NodeMessage.metric:type_name -> node_agent.v1.MetricPayload
-	18, // 5: node_agent.v1.NodeMessage.health_result:type_name -> node_agent.v1.HealthCheckResultPayload
-	20, // 6: node_agent.v1.NodeMessage.profile_data:type_name -> node_agent.v1.ProfileDataPayload
-	24, // 7: node_agent.v1.NodeMessage.container_list:type_name -> node_agent.v1.ContainerListPayload
-	28, // 8: node_agent.v1.NodeMessage.log_diagnostic:type_name -> node_agent.v1.LogDiagnosticPayload
-	31, // 9: node_agent.v1.NodeMessage.network_stats:type_name -> node_agent.v1.NetworkStatsPayload
-	7,  // 10: node_agent.v1.NodeMessage.hypervisor_info:type_name -> node_agent.v1.HypervisorInfoPayload
-	36, // 11: node_agent.v1.NodeMessage.terminal_output:type_name -> node_agent.v1.TerminalOutputPayload
-	37, // 12: node_agent.v1.NodeMessage.terminal_closed:type_name -> node_agent.v1.TerminalClosedPayload
-	40, // 13: node_agent.v1.NodeMessage.file_op_response:type_name -> node_agent.v1.FileOperationResponsePayload
-	12, // 14: node_agent.v1.ServerMessage.execute_job:type_name -> node_agent.v1.ExecuteJobPayload
+	10, // 4: node_agent.v1.NodeMessage.metric:type_name -> node_agent.v1.MetricPayload
+	22, // 5: node_agent.v1.NodeMessage.health_result:type_name -> node_agent.v1.HealthCheckResultPayload
+	38, // 6: node_agent.v1.NodeMessage.profile_data:type_name -> node_agent.v1.ProfileDataPayload
+	19, // 7: node_agent.v1.NodeMessage.container_list:type_name -> node_agent.v1.ContainerListPayload
+	24, // 8: node_agent.v1.NodeMessage.log_diagnostic:type_name -> node_agent.v1.LogDiagnosticPayload
+	27, // 9: node_agent.v1.NodeMessage.network_stats:type_name -> node_agent.v1.NetworkStatsPayload
+	8,  // 10: node_agent.v1.NodeMessage.hypervisor_info:type_name -> node_agent.v1.HypervisorInfoPayload
+	32, // 11: node_agent.v1.NodeMessage.terminal_output:type_name -> node_agent.v1.TerminalOutputPayload
+	33, // 12: node_agent.v1.NodeMessage.terminal_closed:type_name -> node_agent.v1.TerminalClosedPayload
+	36, // 13: node_agent.v1.NodeMessage.file_op_response:type_name -> node_agent.v1.FileOperationResponsePayload
+	11, // 14: node_agent.v1.ServerMessage.execute_job:type_name -> node_agent.v1.ExecuteJobPayload
 	13, // 15: node_agent.v1.ServerMessage.stream_logs:type_name -> node_agent.v1.StreamLogsPayload
 	14, // 16: node_agent.v1.ServerMessage.stop_logs:type_name -> node_agent.v1.StopLogsPayload
-	16, // 17: node_agent.v1.ServerMessage.configure_health_check:type_name -> node_agent.v1.ConfigureHealthCheckPayload
-	17, // 18: node_agent.v1.ServerMessage.stop_health_check:type_name -> node_agent.v1.StopHealthCheckPayload
-	19, // 19: node_agent.v1.ServerMessage.request_profile:type_name -> node_agent.v1.RequestProfilePayload
-	21, // 20: node_agent.v1.ServerMessage.stream_containers:type_name -> node_agent.v1.StreamContainersPayload
-	22, // 21: node_agent.v1.ServerMessage.stop_containers:type_name -> node_agent.v1.StopContainersPayload
-	27, // 22: node_agent.v1.ServerMessage.collect_logs:type_name -> node_agent.v1.CollectLogsPayload
-	30, // 23: node_agent.v1.ServerMessage.request_network_stats:type_name -> node_agent.v1.RequestNetworkStatsPayload
-	32, // 24: node_agent.v1.ServerMessage.start_terminal:type_name -> node_agent.v1.StartTerminalPayload
-	33, // 25: node_agent.v1.ServerMessage.terminal_input:type_name -> node_agent.v1.TerminalInputPayload
-	34, // 26: node_agent.v1.ServerMessage.terminal_resize:type_name -> node_agent.v1.TerminalResizePayload
-	35, // 27: node_agent.v1.ServerMessage.close_terminal:type_name -> node_agent.v1.CloseTerminalPayload
-	38, // 28: node_agent.v1.ServerMessage.file_op_request:type_name -> node_agent.v1.FileOperationRequestPayload
-	2,  // 29: node_agent.v1.JobResultPayload.status:type_name -> node_agent.v1.JobStatus
-	0,  // 30: node_agent.v1.ExecuteJobPayload.command_type:type_name -> node_agent.v1.CommandType
-	1,  // 31: node_agent.v1.RequestProfilePayload.profile_type:type_name -> node_agent.v1.ProfileType
-	1,  // 32: node_agent.v1.ProfileDataPayload.profile_type:type_name -> node_agent.v1.ProfileType
-	23, // 33: node_agent.v1.ContainerListPayload.containers:type_name -> node_agent.v1.ContainerInfo
-	29, // 34: node_agent.v1.LogDiagnosticPayload.sources:type_name -> node_agent.v1.LogSourceBundle
-	3,  // 35: node_agent.v1.FileOperationRequestPayload.op_type:type_name -> node_agent.v1.FileOpType
-	39, // 36: node_agent.v1.FileOperationResponsePayload.entries:type_name -> node_agent.v1.FileEntryInfo
+	20, // 17: node_agent.v1.ServerMessage.configure_health_check:type_name -> node_agent.v1.ConfigureHealthCheckPayload
+	21, // 18: node_agent.v1.ServerMessage.stop_health_check:type_name -> node_agent.v1.StopHealthCheckPayload
+	37, // 19: node_agent.v1.ServerMessage.request_profile:type_name -> node_agent.v1.RequestProfilePayload
+	16, // 20: node_agent.v1.ServerMessage.stream_containers:type_name -> node_agent.v1.StreamContainersPayload
+	17, // 21: node_agent.v1.ServerMessage.stop_containers:type_name -> node_agent.v1.StopContainersPayload
+	23, // 22: node_agent.v1.ServerMessage.collect_logs:type_name -> node_agent.v1.CollectLogsPayload
+	26, // 23: node_agent.v1.ServerMessage.request_network_stats:type_name -> node_agent.v1.RequestNetworkStatsPayload
+	28, // 24: node_agent.v1.ServerMessage.start_terminal:type_name -> node_agent.v1.StartTerminalPayload
+	29, // 25: node_agent.v1.ServerMessage.terminal_input:type_name -> node_agent.v1.TerminalInputPayload
+	30, // 26: node_agent.v1.ServerMessage.terminal_resize:type_name -> node_agent.v1.TerminalResizePayload
+	31, // 27: node_agent.v1.ServerMessage.close_terminal:type_name -> node_agent.v1.CloseTerminalPayload
+	34, // 28: node_agent.v1.ServerMessage.file_op_request:type_name -> node_agent.v1.FileOperationRequestPayload
+	0,  // 29: node_agent.v1.ExecuteJobPayload.command_type:type_name -> node_agent.v1.CommandType
+	2,  // 30: node_agent.v1.JobResultPayload.status:type_name -> node_agent.v1.JobStatus
+	18, // 31: node_agent.v1.ContainerListPayload.containers:type_name -> node_agent.v1.ContainerInfo
+	25, // 32: node_agent.v1.LogDiagnosticPayload.sources:type_name -> node_agent.v1.LogSourceBundle
+	3,  // 33: node_agent.v1.FileOperationRequestPayload.op_type:type_name -> node_agent.v1.FileOpType
+	35, // 34: node_agent.v1.FileOperationResponsePayload.entries:type_name -> node_agent.v1.FileEntryInfo
+	1,  // 35: node_agent.v1.RequestProfilePayload.profile_type:type_name -> node_agent.v1.ProfileType
+	1,  // 36: node_agent.v1.ProfileDataPayload.profile_type:type_name -> node_agent.v1.ProfileType
 	4,  // 37: node_agent.v1.NodeAgentService.RegisterCommands:input_type -> node_agent.v1.RegisterCommandRequest
 	6,  // 38: node_agent.v1.NodeAgentService.Connect:input_type -> node_agent.v1.NodeMessage
-	25, // 39: node_agent.v1.NodeAgentService.ReportMetrics:input_type -> node_agent.v1.MetricRequest
+	39, // 39: node_agent.v1.NodeAgentService.ReportMetrics:input_type -> node_agent.v1.MetricRequest
 	5,  // 40: node_agent.v1.NodeAgentService.RegisterCommands:output_type -> node_agent.v1.RegisterCommandsResponse
-	9,  // 41: node_agent.v1.NodeAgentService.Connect:output_type -> node_agent.v1.ServerMessage
-	26, // 42: node_agent.v1.NodeAgentService.ReportMetrics:output_type -> node_agent.v1.MetricResponse
+	7,  // 41: node_agent.v1.NodeAgentService.Connect:output_type -> node_agent.v1.ServerMessage
+	40, // 42: node_agent.v1.NodeAgentService.ReportMetrics:output_type -> node_agent.v1.MetricResponse
 	40, // [40:43] is the sub-list for method output_type
 	37, // [37:40] is the sub-list for method input_type
 	37, // [37:37] is the sub-list for extension type_name
@@ -3545,7 +3584,7 @@ func file_proto_node_agent_v1_node_agent_proto_init() {
 		(*NodeMessage_TerminalClosed)(nil),
 		(*NodeMessage_FileOpResponse)(nil),
 	}
-	file_proto_node_agent_v1_node_agent_proto_msgTypes[5].OneofWrappers = []any{
+	file_proto_node_agent_v1_node_agent_proto_msgTypes[3].OneofWrappers = []any{
 		(*ServerMessage_ExecuteJob)(nil),
 		(*ServerMessage_StreamLogs)(nil),
 		(*ServerMessage_StopLogs)(nil),
