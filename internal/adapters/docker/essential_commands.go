@@ -17,6 +17,16 @@ import (
 	"github.com/docker/docker/api/types/container"
 )
 
+// ComposeAvailable reports whether the Docker Compose v2 plugin is installed. Without it,
+// `docker compose up -d` fails with a confusing "unknown shorthand flag: 'd'".
+func ComposeAvailable() error {
+	if err := exec.Command("docker", "compose", "version").Run(); err != nil {
+		return fmt.Errorf("docker compose is not installed on this node: install the Docker Compose plugin " +
+			"(docker-compose-plugin from Docker's repository, or docker-compose-v2 on Ubuntu/Debian)")
+	}
+	return nil
+}
+
 func Stop(appName domain.AppName) error {
 	ymlPath := filepath.Join(paths.GetSubdir("apps"), string(appName), "compose.yml")
 
@@ -38,6 +48,10 @@ func Start(appName domain.AppName) error {
 	// Validar seguridad del compose antes de levantar contenedores
 	if err := ValidateCompose(string(content), appDir); err != nil {
 		return fmt.Errorf("validación de seguridad fallida para %s: %w", appName, err)
+	}
+
+	if err := ComposeAvailable(); err != nil {
+		return err
 	}
 
 	fmt.Printf("🔄 Levantando aplicación '%s'...\n", appName)
