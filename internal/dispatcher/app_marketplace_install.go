@@ -105,6 +105,12 @@ func (c *MarketplaceInstall) Execute(_ context.Context, payload map[string]any) 
 		return fmt.Errorf("marketplace.install: write .env: %w", err)
 	}
 
+	// Catalog templates attach to the external autohost_net network. Only `autohost setup`
+	// creates it, so nodes enrolled with just the agent would fail at compose up.
+	if err := docker.CreateDockerNetwork(); err != nil {
+		return fmt.Errorf("marketplace.install: ensure autohost_net network: %w", err)
+	}
+
 	fmt.Printf("🚀 Installing marketplace app '%s' from %s\n", p.AppName, appDir)
 
 	if err := docker.Start(appName); err != nil {
