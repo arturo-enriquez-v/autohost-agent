@@ -10,12 +10,14 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"autohost-agent/internal/adapters/docker"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/stdcopy"
 )
@@ -84,14 +86,48 @@ func execContainerCommand(ctx context.Context, jobType string) ExecuteResult {
 
 // containerInfo is the JSON shape returned for each container in container.list.
 type containerInfo struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Image   string `json:"image"`
-	State   string `json:"state"`
-	Status  string `json:"status"`
-	CPU     string `json:"cpu,omitempty"`
-	Mem     string `json:"mem,omitempty"`
-	MemPerc string `json:"memPerc,omitempty"`
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	Image   string          `json:"image"`
+	State   string          `json:"state"`
+	Status  string          `json:"status"`
+	CPU     string          `json:"cpu,omitempty"`
+	Mem     string          `json:"mem,omitempty"`
+	MemPerc string          `json:"memPerc,omitempty"`
+	Ports   []ContainerPort `json:"ports,omitempty"`
+}
+
+// ContainerPort is a container port published on the host.
+type ContainerPort struct {
+	PublicPort  uint16 `json:"public"`
+	PrivatePort uint16 `json:"private"`
+	Protocol    string `json:"protocol"`
+}
+
+// publishedPorts returns the ports published on the host, one per host port and protocol (Docker lists
+// the IPv4 and IPv6 bindings separately), sorted by host port.
+func publishedPorts(ports []types.Port) []ContainerPort {
+	type key struct {
+		port  uint16
+		proto string
+	}
+	seen := make(map[key]bool)
+	var out []ContainerPort
+	for _, p := range ports {
+		k := key{p.PublicPort, p.Type}
+		if p.PublicPort == 0 || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, ContainerPort{PublicPort: p.PublicPort, PrivatePort: p.PrivatePort, Protocol: p.Type})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PublicPort != out[j].PublicPort {
+			return out[i].PublicPort < out[j].PublicPort
+		}
+		return out[i].Protocol < out[j].Protocol
+	})
+	return out
 }
 
 // ContainerEntry is the public version of containerInfo used by the transport
@@ -105,6 +141,7 @@ type ContainerEntry struct {
 	CPU     string
 	Mem     string
 	MemPerc string
+	Ports   []ContainerPort
 }
 
 // ContainerSnapshotResult is returned by ContainerListSnapshot.
@@ -131,6 +168,7 @@ func ContainerListSnapshot(ctx context.Context) ContainerSnapshotResult {
 			CPU:     c.CPU,
 			Mem:     c.Mem,
 			MemPerc: c.MemPerc,
+			Ports:   c.Ports,
 		})
 	}
 	return ContainerSnapshotResult{Containers: entries}
@@ -163,25 +201,13 @@ func containerListRaw(ctx context.Context) ([]containerInfo, error) {
 			name = strings.TrimPrefix(c.Names[0], "/")
 		}
 
-		var pubPorts []string
-		seenPorts := make(map[uint16]bool)
-		for _, p := range c.Ports {
-			if p.PublicPort > 0 && !seenPorts[p.PublicPort] {
-				seenPorts[p.PublicPort] = true
-				pubPorts = append(pubPorts, fmt.Sprintf("%d:%d/%s", p.PublicPort, p.PrivatePort, p.Type))
-			}
-		}
-		statusStr := c.Status
-		if len(pubPorts) > 0 {
-			statusStr = fmt.Sprintf("%s [%s]", c.Status, strings.Join(pubPorts, ", "))
-		}
-
 		result[i] = containerInfo{
 			ID:     id,
 			Name:   name,
 			Image:  c.Image,
 			State:  c.State,
-			Status: statusStr,
+			Status: c.Status,
+			Ports:  publishedPorts(c.Ports),
 		}
 
 		// Collect live stats for running containers

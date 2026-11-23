@@ -211,6 +211,7 @@ func (c *GRPCClient) sendContainerSnapshot(ctx context.Context, out chan<- *pb.N
 			Cpu:     ci.CPU,
 			Mem:     ci.Mem,
 			MemPerc: ci.MemPerc,
+			Ports:   protoPorts(ci.Ports),
 		})
 	}
 
@@ -225,4 +226,16 @@ func (c *GRPCClient) sendContainerSnapshot(ctx context.Context, out chan<- *pb.N
 	default:
 		log.Printf("⚠️  gRPC: container snapshot buffer full, skipping")
 	}
+}
+
+func protoPorts(ports []dispatcher.ContainerPort) []*pb.ContainerPort {
+	out := make([]*pb.ContainerPort, 0, len(ports))
+	for _, p := range ports {
+		out = append(out, &pb.ContainerPort{
+			PublicPort:  uint32(p.PublicPort),
+			PrivatePort: uint32(p.PrivatePort),
+			Protocol:    p.Protocol,
+		})
+	}
+	return out
 }
