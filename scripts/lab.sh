@@ -116,7 +116,7 @@ cmd_create() {
 	sleep 4
 	info "Installing Docker and tools in '$name'"
 	incus exec "$name" -- apt-get update -qq
-	incus exec "$name" -- apt-get install -y -qq docker.io curl wireguard-tools
+	incus exec "$name" -- apt-get install -y -qq docker.io docker-compose-v2 curl wireguard-tools
 	ok "Instance '$name' ready"
 }
 
