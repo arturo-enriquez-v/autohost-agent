@@ -19,7 +19,7 @@ func TestIsDangerousIP(t *testing.T) {
 		"224.0.0.1",
 		"239.255.255.250",
 		"240.0.0.1",
-		"100.64.0.1",
+		"100.100.100.200",
 		"fe80::1",
 		"ff02::1",
 	}
@@ -36,6 +36,9 @@ func TestIsDangerousIP(t *testing.T) {
 		"1.1.1.1",
 		"142.250.190.46",
 		"2607:f8b0:4005:805::200e",
+		// VPN (Tailscale/Headscale) addresses of other nodes.
+		"100.64.0.1",
+		"100.101.102.103",
 	}
 
 	for _, ipStr := range safe {

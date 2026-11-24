@@ -30,8 +30,9 @@ var forbiddenCIDRs = []*net.IPNet{
 	mustParseCIDR("ff00::/8"),
 	// IPv4 Reserved for future use (240.0.0.0/4)
 	mustParseCIDR("240.0.0.0/4"),
-	// IPv4 Carrier-Grade NAT (100.64.0.0/10)
-	mustParseCIDR("100.64.0.0/10"),
+	// Alibaba Cloud metadata. The rest of 100.64.0.0/10 (CGNAT) stays allowed: Tailscale/Headscale give
+	// nodes VPN addresses there, and health checks and Caddy upstreams must reach other nodes by them.
+	mustParseCIDR("100.100.100.200/32"),
 }
 
 // dangerousHostnames contains known cloud metadata domain names.
