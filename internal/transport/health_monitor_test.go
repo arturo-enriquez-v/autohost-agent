@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"autohost-agent/internal/services/autoheal"
 	pb "autohost-agent/internal/transport/nodepb"
 )
 
@@ -82,5 +83,17 @@ func TestHealthMonitor_ChecksRightAway(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("no result before the first interval")
+	}
+}
+
+// HTTP and TCP monitors name a label; auto-heal acts on the container set in its config.
+func TestAutoHealTarget(t *testing.T) {
+	cfg := healthCheckConfig{ServiceName: "Public API", CheckType: "http"}
+	if got := autoHealTarget(autoheal.AutoHealConfig{Container: "shop-web-1"}, cfg); got != "shop-web-1" {
+		t.Errorf("with container: target = %q, want shop-web-1", got)
+	}
+	cfg = healthCheckConfig{ServiceName: "postgres", CheckType: "process"}
+	if got := autoHealTarget(autoheal.AutoHealConfig{}, cfg); got != "postgres" {
+		t.Errorf("without container: target = %q, want postgres", got)
 	}
 }

@@ -22,6 +22,9 @@ type AutoHealConfig struct {
 	Enabled                      bool           `json:"enabled"`
 	ConsecutiveFailuresThreshold int            `json:"consecutive_failures_threshold"`
 	GracePeriodSeconds           int64          `json:"grace_period_seconds"`
+	// Container is the container restarted and recreated. Empty: the monitor's service name, which for
+	// HTTP and TCP checks may be just a label.
+	Container string `json:"container,omitempty"`
 	Restart                      RestartConfig  `json:"restart"`
 	Recreate                     RecreateConfig `json:"recreate"`
 }

@@ -148,7 +148,7 @@ func (hm *healthMonitor) upsert(ctx context.Context, cfg healthCheckConfig, resu
 					},
 				}
 
-				if err := autoheal.HandleServiceCheck(loopCtx, autoHealCfg, autoHealState, isHealthy, cfg.ServiceName, nil, callbacks); err != nil {
+				if err := autoheal.HandleServiceCheck(loopCtx, autoHealCfg, autoHealState, isHealthy, autoHealTarget(autoHealCfg, cfg), nil, callbacks); err != nil {
 					log.Printf("🩺 [autoheal] error executing check for %s: %v", cfg.ServiceName, err)
 				}
 
@@ -194,6 +194,14 @@ func (hm *healthMonitor) upsert(ctx context.Context, cfg healthCheckConfig, resu
 			}
 		}
 	}()
+}
+
+// autoHealTarget is the container auto-heal acts on: the configured one, or the monitor's service name.
+func autoHealTarget(ah autoheal.AutoHealConfig, cfg healthCheckConfig) string {
+	if c := strings.TrimSpace(ah.Container); c != "" {
+		return c
+	}
+	return cfg.ServiceName
 }
 
 // remove stops the health check loop for the given monitor ID.
