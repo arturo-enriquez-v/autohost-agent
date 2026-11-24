@@ -37,14 +37,29 @@ type healthCheckConfig struct {
 	AutoHealState      string
 }
 
-// healthMonitor manages all active health check loops for a single agent session.
+// healthMonitor manages all active health check loops of the agent.
 type healthMonitor struct {
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc // monitorID -> cancel
+	// failures keeps each monitor's consecutive failures across loop restarts (an edit, a toggle or a
+	// reconnect), so a service that is still down does not go back to "degraded" and alert again.
+	failures map[string]int
 }
 
 func newHealthMonitor() *healthMonitor {
-	return &healthMonitor{cancels: make(map[string]context.CancelFunc)}
+	return &healthMonitor{
+		cancels:  make(map[string]context.CancelFunc),
+		failures: make(map[string]int),
+	}
+}
+
+// recordFailures saves a loop's failure count unless the loop was already replaced or stopped.
+func (hm *healthMonitor) recordFailures(loopCtx context.Context, monitorID string, n int) {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+	if loopCtx.Err() == nil {
+		hm.failures[monitorID] = n
+	}
 }
 
 // upsert starts or restarts the health check loop for the given config.
@@ -59,12 +74,14 @@ func (hm *healthMonitor) upsert(ctx context.Context, cfg healthCheckConfig, resu
 
 	if !cfg.Enabled {
 		delete(hm.cancels, cfg.MonitorID)
+		delete(hm.failures, cfg.MonitorID)
 		log.Printf("🔍 health-check %s (%s): disabled", cfg.ServiceName, cfg.MonitorID)
 		return
 	}
 
 	loopCtx, cancel := context.WithCancel(ctx)
 	hm.cancels[cfg.MonitorID] = cancel
+	initialFailures := hm.failures[cfg.MonitorID]
 
 	interval := time.Duration(cfg.IntervalSeconds) * time.Second
 	if interval <= 0 {
@@ -95,7 +112,7 @@ func (hm *healthMonitor) upsert(ctx context.Context, cfg healthCheckConfig, resu
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
-		consecutiveFailures := 0
+		consecutiveFailures := initialFailures
 
 		for {
 			select {
@@ -110,6 +127,7 @@ func (hm *healthMonitor) upsert(ctx context.Context, cfg healthCheckConfig, resu
 				} else {
 					consecutiveFailures++
 				}
+				hm.recordFailures(loopCtx, cfg.MonitorID, consecutiveFailures)
 
 				var autoHealStateJSON string
 				if autoHealCfg.Enabled {
@@ -172,9 +190,11 @@ func (hm *healthMonitor) remove(monitorID string) {
 		cancel()
 		delete(hm.cancels, monitorID)
 	}
+	delete(hm.failures, monitorID)
 }
 
-// stopAll stops all running health check loops.
+// stopAll stops all running health check loops. Failure counts are kept: the server sends the monitors
+// again when the agent reconnects.
 func (hm *healthMonitor) stopAll() {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
