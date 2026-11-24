@@ -5,6 +5,7 @@ package autoheal
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os/exec"
@@ -183,18 +184,13 @@ func HandleServiceCheck(
 		updateStatus(StatusRecreating)
 		logMsg(fmt.Sprintf("Healthcheck FAILED. Action: RECREATE Compose Service (Attempt %d/%d)", attemptNum, recreateMax), "warn")
 
-		composeFile := config.Recreate.ComposeFilePath
-		targetService := config.Recreate.ServiceName
-		if targetService == "" {
-			targetService = serviceName
-		}
-
 		var output string
 		var err error
-		if composeFile != "" {
-			output, err = runner.Exec(ctx, "docker", "compose", "-f", composeFile, "up", "-d", "--force-recreate", targetService)
+		args, resolveErr := recreateArgs(ctx, runner, config.Recreate, containerID, serviceName)
+		if resolveErr != nil {
+			err = resolveErr
 		} else {
-			output, err = runner.Exec(ctx, "docker", "compose", "up", "-d", "--force-recreate", targetService)
+			output, err = runner.Exec(ctx, "docker", args...)
 		}
 
 		state.RecreateAttempts++
@@ -220,4 +216,59 @@ func HandleServiceCheck(
 	}
 
 	return fmt.Errorf("%s", errMsg)
+}
+
+// Labels Docker Compose sets on the containers it creates.
+const (
+	labelComposeProject     = "com.docker.compose.project"
+	labelComposeWorkingDir  = "com.docker.compose.project.working_dir"
+	labelComposeConfigFiles = "com.docker.compose.project.config_files"
+	labelComposeService     = "com.docker.compose.service"
+)
+
+// recreateArgs builds the "docker compose ... up -d --force-recreate <service>" arguments. With a compose
+// file configured it uses that file and the configured service name (or serviceName). Without one it reads
+// the project, files and service from the Compose labels of the container, so users only have to turn the
+// strategy on.
+func recreateArgs(ctx context.Context, runner CommandRunner, rc RecreateConfig, containerID, serviceName string) ([]string, error) {
+	if rc.ComposeFilePath != "" {
+		target := rc.ServiceName
+		if target == "" {
+			target = serviceName
+		}
+		return []string{"compose", "-f", rc.ComposeFilePath, "up", "-d", "--force-recreate", target}, nil
+	}
+
+	out, err := runner.Exec(ctx, "docker", "inspect", "--format", "{{json .Config.Labels}}", containerID)
+	if err != nil {
+		return nil, fmt.Errorf("read compose labels of %s: %w", containerID, err)
+	}
+	var labels map[string]string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &labels); err != nil {
+		return nil, fmt.Errorf("read compose labels of %s: %w", containerID, err)
+	}
+	project, files := labels[labelComposeProject], labels[labelComposeConfigFiles]
+	if project == "" || files == "" {
+		return nil, fmt.Errorf("container %s was not created by Docker Compose; set the compose file path", containerID)
+	}
+	// A service name equal to the container name is how older clients filled the field by default: the
+	// label is the real compose service.
+	target := rc.ServiceName
+	if target == "" || target == containerID {
+		target = labels[labelComposeService]
+	}
+	if target == "" {
+		return nil, fmt.Errorf("container %s has no compose service label; set the service name", containerID)
+	}
+
+	args := []string{"compose", "-p", project}
+	if dir := labels[labelComposeWorkingDir]; dir != "" {
+		args = append(args, "--project-directory", dir)
+	}
+	for _, f := range strings.Split(files, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			args = append(args, "-f", f)
+		}
+	}
+	return append(args, "up", "-d", "--force-recreate", target), nil
 }

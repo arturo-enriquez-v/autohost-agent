@@ -137,3 +137,79 @@ func TestAutoHealEngine(t *testing.T) {
 
 	t.Log("All 9 Go Agent AutoHeal tests passed!")
 }
+
+// labelRunner answers "docker inspect" with the given labels JSON and records every command.
+type labelRunner struct {
+	labels   string
+	commands []string
+}
+
+func (r *labelRunner) Exec(_ context.Context, cmd string, args ...string) (string, error) {
+	r.commands = append(r.commands, cmd+" "+strings.Join(args, " "))
+	if len(args) > 0 && args[0] == "inspect" {
+		return r.labels + "\n", nil
+	}
+	return "ok", nil
+}
+
+func TestRecreateArgs(t *testing.T) {
+	composeLabels := `{"com.docker.compose.project":"shop","com.docker.compose.project.working_dir":"/opt/shop",` +
+		`"com.docker.compose.project.config_files":"/opt/shop/compose.yml,/opt/shop/compose.prod.yml",` +
+		`"com.docker.compose.service":"web"}`
+	tests := []struct {
+		name    string
+		rc      RecreateConfig
+		labels  string
+		want    string
+		wantErr string
+	}{
+		{"configured file", RecreateConfig{ComposeFilePath: "/srv/app/compose.yml", ServiceName: "api"}, "",
+			"compose -f /srv/app/compose.yml up -d --force-recreate api", ""},
+		{"from labels", RecreateConfig{}, composeLabels,
+			"compose -p shop --project-directory /opt/shop -f /opt/shop/compose.yml -f /opt/shop/compose.prod.yml up -d --force-recreate web", ""},
+		{"labels with service override", RecreateConfig{ServiceName: "worker"}, composeLabels,
+			"compose -p shop --project-directory /opt/shop -f /opt/shop/compose.yml -f /opt/shop/compose.prod.yml up -d --force-recreate worker", ""},
+		{"service name filled with the container name", RecreateConfig{ServiceName: "shop-web-1"}, composeLabels,
+			"compose -p shop --project-directory /opt/shop -f /opt/shop/compose.yml -f /opt/shop/compose.prod.yml up -d --force-recreate web", ""},
+		{"not a compose container", RecreateConfig{}, `{"maintainer":"someone"}`, "", "not created by Docker Compose"},
+		{"no labels", RecreateConfig{}, `null`, "", "not created by Docker Compose"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &labelRunner{labels: tt.labels}
+			args, err := recreateArgs(context.Background(), runner, tt.rc, "shop-web-1", "shop-web-1")
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(args, " "); got != tt.want {
+				t.Errorf("args = %q\n want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// Without a compose file, the recreate step runs the command built from the container's labels.
+func TestAutoHealRecreateFromLabels(t *testing.T) {
+	config := AutoHealConfig{
+		Enabled: true, ConsecutiveFailuresThreshold: 1,
+		Recreate: RecreateConfig{Enabled: true, MaxAttempts: 1},
+	}
+	runner := &labelRunner{labels: `{"com.docker.compose.project":"shop","com.docker.compose.project.config_files":"/opt/shop/compose.yml","com.docker.compose.service":"web"}`}
+	state := CreateInitialState()
+	if err := HandleServiceCheck(context.Background(), config, state, false, "shop-web-1", runner, nil); err != nil {
+		t.Fatal(err)
+	}
+	want := "docker compose -p shop -f /opt/shop/compose.yml up -d --force-recreate web"
+	if last := runner.commands[len(runner.commands)-1]; last != want {
+		t.Errorf("ran %q, want %q", last, want)
+	}
+	if state.RecreateAttempts != 1 {
+		t.Errorf("recreate attempts = %d, want 1", state.RecreateAttempts)
+	}
+}
