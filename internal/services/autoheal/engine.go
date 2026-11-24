@@ -166,6 +166,7 @@ func HandleServiceCheck(
 		output, err := runner.Exec(ctx, "docker", "restart", containerID)
 		state.RestartTimestamps = append(state.RestartTimestamps, now)
 		state.LastActionTimestamp = &now
+		state.LastActionError = actionError(err, output)
 		updateStatus(StatusCoolingDown)
 
 		if err != nil {
@@ -195,6 +196,7 @@ func HandleServiceCheck(
 
 		state.RecreateAttempts++
 		state.LastActionTimestamp = &now
+		state.LastActionError = actionError(err, output)
 		updateStatus(StatusCoolingDown)
 
 		if err != nil {
@@ -216,6 +218,25 @@ func HandleServiceCheck(
 	}
 
 	return fmt.Errorf("%s", errMsg)
+}
+
+// maxActionErrorLen bounds the error kept in the state, which travels with every check result.
+const maxActionErrorLen = 500
+
+// actionError describes a failed restart or recreate command for the server: the command's output when it
+// has one (Docker's message), otherwise the error. Empty when the command succeeded.
+func actionError(err error, output string) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.TrimSpace(output)
+	if msg == "" {
+		msg = err.Error()
+	}
+	if len(msg) > maxActionErrorLen {
+		msg = msg[:maxActionErrorLen] + "…"
+	}
+	return msg
 }
 
 // Labels Docker Compose sets on the containers it creates.

@@ -213,3 +213,25 @@ func TestAutoHealRecreateFromLabels(t *testing.T) {
 		t.Errorf("recreate attempts = %d, want 1", state.RecreateAttempts)
 	}
 }
+
+// A failed restart is reported in the state so the server can show why auto-heal did not help.
+func TestAutoHealReportsActionError(t *testing.T) {
+	config := AutoHealConfig{
+		Enabled: true, ConsecutiveFailuresThreshold: 1, GracePeriodSeconds: 30,
+		Restart: RestartConfig{Enabled: true, MaxAttempts: 3, WindowSeconds: 900},
+	}
+	state := CreateInitialState()
+	failing := &MockRunner{Fail: true}
+	_ = HandleServiceCheck(context.Background(), config, state, false, "web", failing, nil)
+	if state.LastActionError != "failed" {
+		t.Errorf("after a failed restart: last_action_error = %q, want the command output", state.LastActionError)
+	}
+
+	// The next restart (after the grace period) succeeds and clears the error.
+	past := time.Now().Add(-time.Minute).Unix()
+	state.LastActionTimestamp = &past
+	_ = HandleServiceCheck(context.Background(), config, state, false, "web", &MockRunner{}, nil)
+	if state.LastActionError != "" {
+		t.Errorf("after a successful restart: last_action_error = %q, want empty", state.LastActionError)
+	}
+}

@@ -50,6 +50,8 @@ type ServiceHealthState struct {
 	LastActionTimestamp *int64        `json:"last_action_timestamp"`
 	FailureStartedAt    *int64        `json:"failure_started_at,omitempty"`
 	RecoveredAt         *int64        `json:"recovered_at,omitempty"`
+	// LastActionError is why the last restart or recreate command failed; empty when it succeeded.
+	LastActionError string `json:"last_action_error,omitempty"`
 }
 
 type CommandRunner interface {
