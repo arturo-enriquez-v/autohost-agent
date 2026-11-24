@@ -59,3 +59,28 @@ func TestHealthMonitor_KeepsFailuresAcrossRestarts(t *testing.T) {
 		t.Fatalf("after deleting and re-creating the monitor: failures = %d, want 1", got)
 	}
 }
+
+// A new or re-sent monitor is checked right away, not after its first interval.
+func TestHealthMonitor_ChecksRightAway(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hm := newHealthMonitor()
+	defer hm.stopAll()
+	results := make(chan *pb.NodeMessage, 1)
+	hm.upsert(ctx, healthCheckConfig{
+		MonitorID: "mon-1", ServiceName: "web", CheckType: "http",
+		HTTPURL: ts.URL, HTTPExpectedStatus: 200, IntervalSeconds: 3600, Enabled: true,
+	}, results)
+
+	select {
+	case msg := <-results:
+		if got := msg.GetHealthResult().GetStatus(); got != "up" {
+			t.Errorf("status = %q, want up", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no result before the first interval")
+	}
+}

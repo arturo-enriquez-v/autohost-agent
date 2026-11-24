@@ -114,67 +114,81 @@ func (hm *healthMonitor) upsert(ctx context.Context, cfg healthCheckConfig, resu
 
 		consecutiveFailures := initialFailures
 
+		// runOnce runs the check, applies auto-heal and sends the result. It returns false when the loop
+		// was stopped meanwhile.
+		runOnce := func() bool {
+			status, latencyMs, msg := runCheck(loopCtx, cfg)
+			isHealthy := (status == "up")
+			if isHealthy {
+				consecutiveFailures = 0
+			} else {
+				consecutiveFailures++
+			}
+			hm.recordFailures(loopCtx, cfg.MonitorID, consecutiveFailures)
+
+			var autoHealStateJSON string
+			if autoHealCfg.Enabled {
+				if autoHealCfg.ConsecutiveFailuresThreshold <= 0 {
+					if cfg.FailureThreshold > 0 {
+						autoHealCfg.ConsecutiveFailuresThreshold = cfg.FailureThreshold
+					} else {
+						autoHealCfg.ConsecutiveFailuresThreshold = 3
+					}
+				}
+
+				callbacks := &autoheal.AutoHealCallbacks{
+					OnLog: func(message string, level string) {
+						log.Printf("🩺 %s", message)
+					},
+					OnStatusChange: func(serviceName string, previousStatus, newStatus autoheal.ServiceStatus) {
+						log.Printf("🩺 [autoheal] %s: status changed from %s to %s", serviceName, previousStatus, newStatus)
+					},
+					OnCriticalFailure: func(serviceName string, state *autoheal.ServiceHealthState, err error) {
+						log.Printf("🚨 [autoheal] %s: critical failure: %v", serviceName, err)
+					},
+				}
+
+				if err := autoheal.HandleServiceCheck(loopCtx, autoHealCfg, autoHealState, isHealthy, cfg.ServiceName, nil, callbacks); err != nil {
+					log.Printf("🩺 [autoheal] error executing check for %s: %v", cfg.ServiceName, err)
+				}
+
+				if bytes, err := json.Marshal(autoHealState); err == nil {
+					autoHealStateJSON = string(bytes)
+				}
+			}
+
+			payload := &pb.NodeMessage{
+				Payload: &pb.NodeMessage_HealthResult{
+					HealthResult: &pb.HealthCheckResultPayload{
+						MonitorId:           cfg.MonitorID,
+						Status:              status,
+						LatencyMs:           int32(latencyMs),
+						Message:             msg,
+						ConsecutiveFailures: int32(consecutiveFailures),
+						AutoHealState:       autoHealStateJSON,
+					},
+				},
+			}
+			select {
+			case results <- payload:
+				return true
+			case <-loopCtx.Done():
+				return false
+			}
+		}
+
+		// Check right away, so a new or edited monitor (or "check now") shows a result without waiting for
+		// the first interval.
+		if !runOnce() {
+			return
+		}
 		for {
 			select {
 			case <-loopCtx.Done():
 				log.Printf("🔍 health-check %s (%s): stopped", cfg.ServiceName, cfg.MonitorID)
 				return
 			case <-ticker.C:
-				status, latencyMs, msg := runCheck(loopCtx, cfg)
-				isHealthy := (status == "up")
-				if isHealthy {
-					consecutiveFailures = 0
-				} else {
-					consecutiveFailures++
-				}
-				hm.recordFailures(loopCtx, cfg.MonitorID, consecutiveFailures)
-
-				var autoHealStateJSON string
-				if autoHealCfg.Enabled {
-					if autoHealCfg.ConsecutiveFailuresThreshold <= 0 {
-						if cfg.FailureThreshold > 0 {
-							autoHealCfg.ConsecutiveFailuresThreshold = cfg.FailureThreshold
-						} else {
-							autoHealCfg.ConsecutiveFailuresThreshold = 3
-						}
-					}
-
-					callbacks := &autoheal.AutoHealCallbacks{
-						OnLog: func(message string, level string) {
-							log.Printf("🩺 %s", message)
-						},
-						OnStatusChange: func(serviceName string, previousStatus, newStatus autoheal.ServiceStatus) {
-							log.Printf("🩺 [autoheal] %s: status changed from %s to %s", serviceName, previousStatus, newStatus)
-						},
-						OnCriticalFailure: func(serviceName string, state *autoheal.ServiceHealthState, err error) {
-							log.Printf("🚨 [autoheal] %s: critical failure: %v", serviceName, err)
-						},
-					}
-
-					if err := autoheal.HandleServiceCheck(loopCtx, autoHealCfg, autoHealState, isHealthy, cfg.ServiceName, nil, callbacks); err != nil {
-						log.Printf("🩺 [autoheal] error executing check for %s: %v", cfg.ServiceName, err)
-					}
-
-					if bytes, err := json.Marshal(autoHealState); err == nil {
-						autoHealStateJSON = string(bytes)
-					}
-				}
-
-				payload := &pb.NodeMessage{
-					Payload: &pb.NodeMessage_HealthResult{
-						HealthResult: &pb.HealthCheckResultPayload{
-							MonitorId:           cfg.MonitorID,
-							Status:              status,
-							LatencyMs:           int32(latencyMs),
-							Message:             msg,
-							ConsecutiveFailures: int32(consecutiveFailures),
-							AutoHealState:       autoHealStateJSON,
-						},
-					},
-				}
-				select {
-				case results <- payload:
-				case <-loopCtx.Done():
+				if !runOnce() {
 					return
 				}
 			}
